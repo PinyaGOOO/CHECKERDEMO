@@ -66,6 +66,32 @@ export async function applyHostnameChecks(assessment, adapter) {
   }));
 }
 
+export async function applyEcoRouterHostnameChecks(assessment, proxmox, serial) {
+  const routerRules = hostnameRules.filter((rule) => rule.vmid === 101 || rule.vmid === 102);
+  await Promise.all(routerRules.map(async (rule) => {
+    const device = assessment.devices.find((item) => item.vmid === rule.vmid);
+    const check = device?.checks.find((item) => item.id === rule.checkId);
+    if (!device || !check || device.state !== "running") return;
+    const startedAt = performance.now();
+    try {
+      const credentials = await proxmox.vmConsoleCredentials(rule.vmid);
+      const actual = await serial.getHostname(rule.vmid, credentials);
+      const matches = actual.localeCompare(rule.expected, undefined, { sensitivity: "accent" }) === 0;
+      Object.assign(check, {
+        status: matches ? "pass" : "fail", score: matches ? 1 : 0, source: "live",
+        method: "EcoRouter serial CLI", duration: Math.max(1, Math.round(performance.now() - startedAt)),
+        evidence: `ожидается=${rule.expected} · получено=${actual}`
+      });
+    } catch (error) {
+      Object.assign(check, {
+        status: "unknown", score: 0, source: "unavailable", method: "EcoRouter serial CLI",
+        duration: Math.max(1, Math.round(performance.now() - startedAt)),
+        evidence: `Serial CLI недоступен · ${errorSummary(error)}`
+      });
+    }
+  }));
+}
+
 export function recalculateDeviceScores(assessment) {
   for (const device of assessment.devices) {
     const liveChecks = device.checks.filter((check) => check.source === "live");

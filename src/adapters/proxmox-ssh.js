@@ -72,4 +72,16 @@ export class ProxmoxSshAdapter {
     const output = await this.execute(command);
     return JSON.parse(output);
   }
+
+  async vmConsoleCredentials(vmid) {
+    if (!Number.isInteger(vmid) || vmid < 100) throw new TypeError("Invalid VMID");
+    const output = await this.execute(`qm config ${vmid}`);
+    const encoded = output.match(/^description:\s*(.+)$/m)?.[1];
+    if (!encoded) throw new Error(`Console credentials are not defined for VM ${vmid}`);
+    const description = decodeURIComponent(encoded);
+    const record = description.split(/\r?\n/).find((line) => line && !line.startsWith("#") && line.includes(":"));
+    if (!record) throw new Error(`Console credentials are not readable for VM ${vmid}`);
+    const separator = record.indexOf(":");
+    return { username: record.slice(0, separator), password: record.slice(separator + 1) };
+  }
 }

@@ -4,6 +4,7 @@ import { snapshot } from "../src/data/assessment.js";
 import { ProxmoxSshAdapter } from "../src/adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-server.js";
 import { applyHostnameChecks, recalculateDeviceScores } from "../src/checks/hostnames.js";
+import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
 
 test("assessment scores are internally consistent", () => {
   const data = snapshot();
@@ -76,4 +77,9 @@ test("hostname checks compare case-insensitively and preserve unavailable state"
   assert.equal(isp.assessedMaxScore, 1);
   assert.equal(router.checks.find((check) => check.id === "hq-hostname").source, "unavailable");
   assert.equal(router.assessedMaxScore, 0);
+});
+
+test("EcoRouter serial output parser extracts hostname", () => {
+  const output = "ecorouter>show hostname\r\n\recorouter\x1b[m\r\n\recorouter>";
+  assert.equal(parseEcoRouterHostname(output), "ecorouter");
 });

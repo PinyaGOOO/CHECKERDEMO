@@ -1,11 +1,13 @@
 import { ProxmoxSshAdapter } from "../adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../checks/hq-server.js";
-import { applyHostnameChecks, recalculateDeviceScores } from "../checks/hostnames.js";
+import { EcoRouterSerialAdapter } from "../adapters/ecorouter-serial.js";
+import { applyEcoRouterHostnameChecks, applyHostnameChecks, recalculateDeviceScores } from "../checks/hostnames.js";
 
 const adapter = new ProxmoxSshAdapter({
   alias: process.env.CHECKER_SSH_ALIAS || "checker",
   transport: process.env.CHECKER_TRANSPORT === "local" ? "local" : "ssh"
 });
+const ecoRouterSerial = new EcoRouterSerialAdapter();
 let cache = null;
 let cachedAt = 0;
 const cacheTtl = 5_000;
@@ -50,6 +52,9 @@ export async function applyLiveInfrastructure(assessment) {
       applyCheckResults(hqServer, await collectHqServerChecks(adapter));
     }
     await applyHostnameChecks(assessment, adapter);
+    if (adapter.transport === "local") {
+      await applyEcoRouterHostnameChecks(assessment, adapter, ecoRouterSerial);
+    }
     recalculateDeviceScores(assessment);
   } catch (error) {
     assessment.lab.mode = "mock";

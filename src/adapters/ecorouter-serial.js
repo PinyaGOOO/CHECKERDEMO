@@ -1,0 +1,67 @@
+import net from "node:net";
+
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+export function cleanTerminalOutput(value) {
+  return value
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[78]/g, "")
+    .replace(/\r/g, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "");
+}
+
+export function parseEcoRouterHostname(value) {
+  const lines = cleanTerminalOutput(value).split("\n").map((line) => line.trim()).filter(Boolean);
+  const candidates = lines.filter((line) =>
+    /^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(line)
+    && !/^(Password|login|admin|enable)$/i.test(line)
+  );
+  return candidates.at(-1) || null;
+}
+
+export class EcoRouterSerialAdapter {
+  constructor({ socketDirectory = "/var/run/qemu-server", timeout = 6_000 } = {}) {
+    this.socketDirectory = socketDirectory;
+    this.timeout = timeout;
+  }
+
+  async getHostname(vmid, credentials) {
+    const socketPath = `${this.socketDirectory}/${vmid}.serial0`;
+    const socket = net.createConnection({ path: socketPath });
+    const chunks = [];
+    socket.on("data", (chunk) => chunks.push(chunk.toString("utf8")));
+
+    const connected = new Promise((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    const timer = setTimeout(() => socket.destroy(new Error("Serial console timeout")), this.timeout);
+
+    try {
+      await connected;
+      socket.write("\r\n");
+      await delay(450);
+      let screen = cleanTerminalOutput(chunks.join(""));
+
+      if (/login:\s*$/i.test(screen)) {
+        socket.write(`${credentials.username}\r\n`);
+        await delay(350);
+        screen = cleanTerminalOutput(chunks.join(""));
+      }
+      if (/Password:\s*$/i.test(screen)) {
+        socket.write(`${credentials.password}\r\n`);
+        await delay(900);
+      }
+
+      chunks.length = 0;
+      socket.write("show hostname\r\n");
+      await delay(900);
+      const hostname = parseEcoRouterHostname(chunks.join(""));
+      if (!hostname) throw new Error("EcoRouter did not return hostname");
+      return hostname;
+    } finally {
+      clearTimeout(timer);
+      socket.end();
+    }
+  }
+}
