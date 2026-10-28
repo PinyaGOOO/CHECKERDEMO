@@ -39,8 +39,10 @@ export class EcoRouterSerialAdapter {
 
     try {
       await connected;
-      socket.write("\r\n");
-      await delay(450);
+      // Ctrl+C returns a half-entered login/password prompt to a known state,
+      // and is harmless when an authenticated CLI prompt is already active.
+      socket.write("\x03\r\n");
+      await delay(650);
       let screen = cleanTerminalOutput(chunks.join(""));
 
       if (/login:\s*$/i.test(screen)) {
@@ -50,7 +52,7 @@ export class EcoRouterSerialAdapter {
       }
       if (/Password:\s*$/i.test(screen)) {
         socket.write(`${credentials.password}\r\n`);
-        await delay(900);
+        await delay(1_400);
       }
 
       chunks.length = 0;
