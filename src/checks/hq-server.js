@@ -89,7 +89,9 @@ export function applyCheckResults(device, results) {
   for (const check of device.checks) {
     if (results[check.id]) Object.assign(check, results[check.id]);
   }
-  device.score = device.checks.reduce((sum, check) => sum + check.score, 0);
+  const liveChecks = device.checks.filter((check) => check.source === "live");
+  device.score = liveChecks.reduce((sum, check) => sum + check.score, 0);
+  device.assessedMaxScore = liveChecks.reduce((sum, check) => sum + check.maxScore, 0);
   device.checkMode = Object.keys(results).length ? "live" : "demo";
   return device;
 }

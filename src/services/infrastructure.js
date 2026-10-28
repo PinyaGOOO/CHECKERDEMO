@@ -25,6 +25,16 @@ export async function applyLiveInfrastructure(assessment) {
       if (!vm) continue;
       device.state = vm.status;
       device.live = vm;
+      for (const check of device.checks) {
+        check.status = "unknown";
+        check.score = 0;
+        check.source = "pending";
+        check.evidence = "Проверка для этого критерия ещё не подключена";
+        check.duration = null;
+      }
+      device.score = 0;
+      device.assessedMaxScore = 0;
+      device.checkMode = "pending";
     }
     assessment.lab.mode = "live";
     assessment.lab.connection = {

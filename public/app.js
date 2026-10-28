@@ -5,6 +5,7 @@ function deviceStatus(device) {
   if (device.state !== "running") return "offline";
   if (device.checks.some((check) => check.status === "fail")) return "fail";
   if (device.checks.some((check) => check.status === "warning")) return "warning";
+  if (device.checks.every((check) => check.status === "unknown")) return "unknown";
   return "pass";
 }
 
@@ -12,7 +13,8 @@ function statusMeta(status) {
   return {
     pass: { symbol: "✓", label: "Выполнено" },
     warning: { symbol: "!", label: "Частично выполнено" },
-    fail: { symbol: "×", label: "Не выполнено" }
+    fail: { symbol: "×", label: "Не выполнено" },
+    unknown: { symbol: "—", label: "Не проверено" }
   }[status];
 }
 
@@ -24,26 +26,28 @@ function formatDate(value) {
 function renderSummary() {
   const { lab, devices } = state.assessment;
   const checks = devices.flatMap((device) => device.checks);
-  const score = devices.reduce((sum, device) => sum + device.score, 0);
-  const max = devices.reduce((sum, device) => sum + device.maxScore, 0);
-  const percent = Math.round(score / max * 100);
+  const liveChecks = checks.filter((check) => check.source === "live");
+  const score = liveChecks.reduce((sum, check) => sum + check.score, 0);
+  const max = liveChecks.reduce((sum, check) => sum + check.maxScore, 0);
+  const percent = max ? Math.round(score / max * 100) : 0;
 
   $("#lab-title").textContent = lab.title;
   $("#lab-subtitle").textContent = lab.subtitle;
   const live = lab.connection?.ok;
   $("#connection-label").textContent = live ? `${lab.connection.node} · SSH` : "Mock fallback";
   $("#connection-dot").classList.toggle("offline", !live);
-  $("#data-mode").textContent = live ? "Live-инвентарь · критерии демо" : "Автономный mock-режим";
+  $("#data-mode").textContent = live ? "Live-инвентарь · mock отключён" : "Автономный mock-режим";
   $("#data-mode").classList.toggle("mock", !live);
   $("#checked-at").textContent = formatDate(lab.checkedAt);
   $("#score-value").textContent = score;
   $("#score-max").textContent = `/ ${max}`;
   $("#score-percent").textContent = `${percent}%`;
   $("#score-ring").style.setProperty("--score", percent);
-  $("#score-caption").textContent = percent >= 80 ? "Уверенный результат" : "Есть критерии для доработки";
+  $("#score-caption").textContent = max ? `${liveChecks.length} из ${checks.length} критериев подключено` : "Нет выполненных проверок";
   $("#passed-count").textContent = checks.filter((check) => check.status === "pass").length;
   $("#warning-count").textContent = checks.filter((check) => check.status === "warning").length;
   $("#failed-count").textContent = checks.filter((check) => check.status === "fail").length;
+  $("#unknown-count").textContent = checks.filter((check) => check.status === "unknown").length;
   $("#online-count").textContent = `${devices.filter((device) => device.state === "running").length}/${devices.length} online`;
 }
 
@@ -59,7 +63,7 @@ function renderDevices() {
     row.innerHTML = `
       <span class="device-icon" style="border-color:${device.color}"></span>
       <span class="device-copy"><strong>${device.vmid} · ${device.name}</strong><small>${device.role}</small></span>
-      <span class="device-result">${device.score}/${device.maxScore}<i class="${status}"></i></span>`;
+      <span class="device-result">${device.score}/${device.assessedMaxScore ?? device.maxScore}<i class="${status}"></i></span>`;
     row.addEventListener("click", () => selectDevice(device.id));
     list.append(row);
   }
@@ -75,7 +79,7 @@ function renderDetail() {
   $("#device-state").textContent = device.state.toUpperCase();
   $("#device-state").classList.toggle("stopped", device.state !== "running");
   $("#device-score").textContent = device.score;
-  $("#device-max").textContent = ` / ${device.maxScore}`;
+  $("#device-max").textContent = ` / ${device.assessedMaxScore ?? device.maxScore}`;
   $("#device-glyph").style.color = device.color;
   $("#check-total").textContent = `${device.checks.length} критериев`;
 
@@ -92,7 +96,7 @@ function renderDetail() {
         <span class="check-score">${check.score}<small> / ${check.maxScore}</small></span>
         <span class="expand-icon">⌄</span>
       </button>
-      <div class="evidence"><div><span class="evidence-label">Evidence</span><p>${check.evidence}</p></div><span class="duration">${check.duration} ms</span></div>`;
+      <div class="evidence"><div><span class="evidence-label">Evidence</span><p>${check.evidence}</p></div><span class="duration">${check.duration == null ? "—" : `${check.duration} ms`}</span></div>`;
     item.querySelector("button").addEventListener("click", (event) => {
       item.classList.toggle("open");
       event.currentTarget.setAttribute("aria-expanded", item.classList.contains("open"));

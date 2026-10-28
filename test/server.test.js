@@ -51,5 +51,6 @@ test("HQ-SRV live checks calculate partial score from guest data", async () => {
   assert.equal(results["hqsrv-hostname"].score, 2);
   assert.equal(results["hqsrv-services"].status, "warning");
   assert.equal(device.checkMode, "live");
-  assert.equal(device.score, 11);
+  assert.equal(device.score, 7);
+  assert.equal(device.assessedMaxScore, 10);
 });
