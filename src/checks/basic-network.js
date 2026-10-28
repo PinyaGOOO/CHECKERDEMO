@@ -1,16 +1,16 @@
-const linuxRules = [
-  { vmid: 104, address: "192.168.100.2", prefix: 27, gateway: "192.168.100.1" },
-  { vmid: 105, address: "192.168.0.2", prefix: 28, gateway: "192.168.0.1" },
-  { vmid: 106, address: "192.168.200.2", prefix: 24, gateway: "192.168.200.1" }
+const segmentRules = [
+  { key: "hq-wan", vmid: 101, id: "hq-wan-ipv4", title: "WAN ↔ ISP", interface: "te0", prefix: 28, peerVmid: 100 },
+  { key: "hq-vlan100", vmid: 101, id: "hq-vlan100-ipv4", title: "VLAN 100 · HQ-SRV", interface: "vl100", prefix: 27, peerVmid: 104 },
+  { key: "hq-vlan200", vmid: 101, id: "hq-vlan200-ipv4", title: "VLAN 200 · HQ-CLI", interface: "vl200", prefix: 24, peerVmid: 106 },
+  { key: "hq-vlan999", vmid: 101, id: "hq-vlan999-ipv4", title: "VLAN 999 · управление", interface: "vl999", prefix: 29 },
+  { key: "br-wan", vmid: 102, id: "br-wan-ipv4", title: "WAN ↔ ISP", interface: "te0", prefix: 28, peerVmid: 100 },
+  { key: "br-lan", vmid: 102, id: "br-lan-ipv4", title: "LAN ↔ BR-SRV", interface: "int1", prefix: 28, peerVmid: 105 }
 ];
 
-const ecoRouterRules = [
-  { vmid: 101, id: "hq-wan-ipv4", title: "WAN IPv4", cidr: "172.16.1.2/28" },
-  { vmid: 101, id: "hq-vlan100-ipv4", title: "VLAN 100 · HQ-SRV", cidr: "192.168.100.1/27" },
-  { vmid: 101, id: "hq-vlan200-ipv4", title: "VLAN 200 · HQ-CLI", cidr: "192.168.200.1/24" },
-  { vmid: 101, id: "hq-vlan999-ipv4", title: "VLAN 999 · управление", cidr: "192.168.99.1/29" },
-  { vmid: 102, id: "br-wan-ipv4", title: "WAN IPv4", cidr: "172.16.2.2/28" },
-  { vmid: 102, id: "br-lan-ipv4", title: "LAN BR-SRV", cidr: "192.168.0.1/28" }
+const linuxRules = [
+  { vmid: 104, routerVmid: 101, routerInterface: "vl100", prefix: 27 },
+  { vmid: 105, routerVmid: 102, routerInterface: "int1", prefix: 28 },
+  { vmid: 106, routerVmid: 101, routerInterface: "vl200", prefix: 24 }
 ];
 
 function errorSummary(error) {
@@ -27,6 +27,50 @@ function upsertCheck(device, id, values) {
   return check;
 }
 
+function ipv4ToInt(address) {
+  const octets = address.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+  return octets.reduce((value, octet) => ((value << 8) | octet) >>> 0, 0);
+}
+
+function prefixMask(prefix) {
+  return prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+}
+
+function networkNumber(address, prefix) {
+  const value = ipv4ToInt(address);
+  return value == null ? null : (value & prefixMask(prefix)) >>> 0;
+}
+
+function isPrivateIpv4(address) {
+  const value = ipv4ToInt(address);
+  if (value == null) return false;
+  return (value >= ipv4ToInt("10.0.0.0") && value <= ipv4ToInt("10.255.255.255"))
+    || (value >= ipv4ToInt("172.16.0.0") && value <= ipv4ToInt("172.31.255.255"))
+    || (value >= ipv4ToInt("192.168.0.0") && value <= ipv4ToInt("192.168.255.255"));
+}
+
+function isUsableHost(address, prefix) {
+  const value = ipv4ToInt(address);
+  const network = networkNumber(address, prefix);
+  if (value == null || network == null || prefix > 30) return false;
+  const broadcast = (network | (~prefixMask(prefix) >>> 0)) >>> 0;
+  return value !== network && value !== broadcast;
+}
+
+function sameSubnet(left, right, prefix) {
+  return networkNumber(left, prefix) === networkNumber(right, prefix);
+}
+
+function rangesOverlap(left, right) {
+  if (!left || !right) return false;
+  const leftStart = networkNumber(left.address, left.prefix);
+  const rightStart = networkNumber(right.address, right.prefix);
+  const leftEnd = (leftStart | (~prefixMask(left.prefix) >>> 0)) >>> 0;
+  const rightEnd = (rightStart | (~prefixMask(right.prefix) >>> 0)) >>> 0;
+  return leftStart <= rightEnd && rightStart <= leftEnd;
+}
+
 function ipv4Addresses(interfaces) {
   return interfaces.flatMap((networkInterface) =>
     (networkInterface["ip-addresses"] || [])
@@ -39,114 +83,218 @@ function routeGateway(execResult) {
   return execResult["out-data"]?.match(/\bdefault\s+via\s+(\d+(?:\.\d+){3})\b/)?.[1] || null;
 }
 
-function setResult(check, passed, evidence, duration) {
+function parseEcoRouterInterfaces(output) {
+  const interfaces = [];
+  let currentInterface = null;
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const interfaceMatch = line.match(/^interface\s+(\S+)/i);
+    if (interfaceMatch) currentInterface = interfaceMatch[1];
+    for (const cidr of line.matchAll(/\b(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})\b/g)) {
+      const firstToken = line.split(/\s+/)[0];
+      const name = currentInterface && /^ip\s+address\b/i.test(line) ? currentInterface : firstToken;
+      if (!interfaces.some((entry) => entry.name.toLowerCase() === name.toLowerCase() && entry.address === cidr[1])) {
+        interfaces.push({ name, address: cidr[1], prefix: Number(cidr[2]) });
+      }
+    }
+  }
+  return interfaces;
+}
+
+function findInterface(observation, name) {
+  return observation?.addresses?.find((entry) => entry.name.toLowerCase() === name.toLowerCase()) || null;
+}
+
+function endpointValid(endpoint, prefix) {
+  return Boolean(endpoint && endpoint.prefix === prefix && isPrivateIpv4(endpoint.address) && isUsableHost(endpoint.address, prefix));
+}
+
+function setResult(check, status, evidence, duration) {
   Object.assign(check, {
-    status: passed ? "pass" : "fail",
-    score: passed ? 1 : 0,
-    source: "live",
+    status,
+    score: status === "pass" ? 1 : 0,
+    source: status === "unknown" ? "unavailable" : "live",
     duration,
     evidence
   });
 }
 
-export async function applyLinuxNetworkChecks(assessment, adapter, report = () => {}) {
-  await Promise.all(linuxRules.map(async (rule) => {
-    const device = assessment.devices.find((item) => item.vmid === rule.vmid);
-    if (!device) return;
-
-    const addressId = `${device.id}-ipv4`;
-    const addressCheck = upsertCheck(device, addressId, {
-      title: "IPv4 и префикс",
-      method: "QEMU Guest Agent",
-      expected: `${rule.address}/${rule.prefix}`
-    });
-    const gatewayCheck = rule.gateway ? upsertCheck(device, `${device.id}-gateway`, {
-      title: "Шлюз по умолчанию",
-      method: "QEMU Guest Agent",
-      expected: rule.gateway
-    }) : null;
-
-    if (device.state !== "running") {
-      for (const check of [addressCheck, gatewayCheck].filter(Boolean)) {
-        Object.assign(check, { status: "unknown", score: 0, source: "unavailable", duration: null, evidence: "VM остановлена" });
-        report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: VM остановлена` });
-      }
-      return;
-    }
-
-    const startedAt = performance.now();
-    try {
-      report({ kind: "command", vmid: rule.vmid, device: device.name, command: `qm guest cmd ${rule.vmid} network-get-interfaces`, message: `Читаем IPv4-интерфейсы ${device.name}` });
-      const interfaces = await adapter.guestCommand(rule.vmid, "network-get-interfaces");
-      const addresses = ipv4Addresses(interfaces);
-      const addressPassed = addresses.some((entry) => entry.address === rule.address && entry.prefix === rule.prefix);
-      const rendered = addresses.length
-        ? addresses.map((entry) => `${entry.name}:${entry.address}/${entry.prefix}`).join(", ")
-        : "не найден";
-      setResult(addressCheck, addressPassed, `ожидается=${addressCheck.expected} · получено=${rendered}`, Math.max(1, Math.round(performance.now() - startedAt)));
-      report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...addressCheck }, message: `${addressCheck.title}: ${addressCheck.status === "pass" ? "выполнено" : "ошибка"} · ${addressCheck.evidence}` });
-
-      if (gatewayCheck) {
-        report({ kind: "command", vmid: rule.vmid, device: device.name, command: `/usr/sbin/ip -4 route show default`, message: `Проверяем шлюз ${device.name}` });
-        const route = await adapter.guestExec(rule.vmid, "/usr/sbin/ip", ["-4", "route", "show", "default"]);
-        const actualGateway = routeGateway(route);
-        setResult(gatewayCheck, actualGateway === rule.gateway, `ожидается=${rule.gateway} · получено=${actualGateway || "не найден"}`, Math.max(1, Math.round(performance.now() - startedAt)));
-        report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...gatewayCheck }, message: `${gatewayCheck.title}: ${gatewayCheck.status === "pass" ? "выполнено" : "ошибка"} · ${gatewayCheck.evidence}` });
-      }
-    } catch (error) {
-      for (const check of [addressCheck, gatewayCheck].filter(Boolean)) {
-        Object.assign(check, {
-          status: "unknown", score: 0, source: "unavailable",
-          duration: Math.max(1, Math.round(performance.now() - startedAt)),
-          evidence: `Канал QGA недоступен · ${errorSummary(error)}`
-        });
-      }
-      for (const check of [addressCheck, gatewayCheck].filter(Boolean)) {
-        report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: недоступно` });
-      }
-    }
-  }));
+function describeAddresses(observation) {
+  if (!observation?.addresses?.length) return "IPv4 не найден";
+  return observation.addresses.map((entry) => `${entry.name}:${entry.address}/${entry.prefix}`).join(", ");
 }
 
-export async function applyEcoRouterNetworkChecks(assessment, proxmox, serial, report = () => {}) {
-  for (const vmid of [101, 102]) {
-    const device = assessment.devices.find((item) => item.vmid === vmid);
-    if (!device) continue;
-    const rules = ecoRouterRules.filter((rule) => rule.vmid === vmid);
-    const checks = rules.map((rule) => upsertCheck(device, rule.id, {
-      title: rule.title,
-      method: "EcoRouter serial CLI",
-      expected: rule.cidr
-    }));
-
-    if (device.state !== "running") {
-      checks.forEach((check) => {
-        Object.assign(check, { status: "unknown", score: 0, source: "unavailable", duration: null, evidence: "VM остановлена" });
-        report({ kind: "result", vmid, device: device.name, check: { ...check }, message: `${check.title}: VM остановлена` });
-      });
-      continue;
-    }
-
-    const startedAt = performance.now();
+async function collectLinux(device, adapter, report, includeGateway) {
+  const observation = { addresses: [], gateway: null, addressError: null, gatewayError: null };
+  if (device.state !== "running") {
+    observation.addressError = "VM остановлена";
+    observation.gatewayError = "VM остановлена";
+    return observation;
+  }
+  try {
+    report({ kind: "command", vmid: device.vmid, device: device.name, command: `qm guest cmd ${device.vmid} network-get-interfaces`, message: `Читаем IPv4-интерфейсы ${device.name}` });
+    observation.addresses = ipv4Addresses(await adapter.guestCommand(device.vmid, "network-get-interfaces"));
+  } catch (error) {
+    observation.addressError = errorSummary(error);
+  }
+  if (includeGateway) {
     try {
-      report({ kind: "command", vmid, device: device.name, command: "show ip interface brief", message: `Читаем адреса ${device.name} через serial CLI` });
-      const credentials = await proxmox.vmConsoleCredentials(vmid);
-      const output = await serial.getIpInterfaceBrief(vmid, credentials);
-      for (let index = 0; index < rules.length; index += 1) {
-        const expected = rules[index].cidr;
-        const passed = output.includes(expected);
-        setResult(checks[index], passed, `ожидается=${expected} · ${passed ? "адрес найден" : "адрес не найден"}`, Math.max(1, Math.round(performance.now() - startedAt)));
-        report({ kind: "result", vmid, device: device.name, check: { ...checks[index] }, message: `${checks[index].title}: ${passed ? "выполнено" : "ошибка"} · ${checks[index].evidence}` });
-      }
+      report({ kind: "command", vmid: device.vmid, device: device.name, command: "/usr/sbin/ip -4 route show default", message: `Проверяем шлюз ${device.name}` });
+      observation.gateway = routeGateway(await adapter.guestExec(device.vmid, "/usr/sbin/ip", ["-4", "route", "show", "default"]));
     } catch (error) {
-      checks.forEach((check) => Object.assign(check, {
-        status: "unknown", score: 0, source: "unavailable",
-        duration: Math.max(1, Math.round(performance.now() - startedAt)),
-        evidence: `Serial CLI недоступен · ${errorSummary(error)}`
-      }));
-      checks.forEach((check) => report({ kind: "result", vmid, device: device.name, check: { ...check }, message: `${check.title}: недоступно` }));
+      observation.gatewayError = errorSummary(error);
     }
+  }
+  return observation;
+}
+
+async function collectEcoRouter(device, proxmox, serial, report) {
+  const observation = { addresses: [], addressError: null };
+  if (device.state !== "running") {
+    observation.addressError = "VM остановлена";
+    return observation;
+  }
+  try {
+    report({ kind: "command", vmid: device.vmid, device: device.name, command: "show ip interface brief", message: `Читаем адреса ${device.name} через serial CLI` });
+    const credentials = await proxmox.vmConsoleCredentials(device.vmid);
+    const output = serial.getNetworkConfiguration
+      ? await serial.getNetworkConfiguration(device.vmid, credentials)
+      : await serial.getIpInterfaceBrief(device.vmid, credentials);
+    observation.addresses = parseEcoRouterInterfaces(output);
+  } catch (error) {
+    observation.addressError = errorSummary(error);
+  }
+  return observation;
+}
+
+export async function applyTopologyNetworkChecks(assessment, adapter, serial, report = () => {}) {
+  const byVmid = new Map(assessment.devices.map((device) => [device.vmid, device]));
+  const observations = new Map();
+  const startedAt = performance.now();
+
+  await Promise.all([100, 104, 105, 106].map(async (vmid) => {
+    observations.set(vmid, await collectLinux(byVmid.get(vmid), adapter, report, vmid !== 100));
+  }));
+  await Promise.all([101, 102].map(async (vmid) => {
+    observations.set(vmid, await collectEcoRouter(byVmid.get(vmid), adapter, serial, report));
+  }));
+
+  const routerEndpoints = new Map(segmentRules.map((rule) => [rule.key, findInterface(observations.get(rule.vmid), rule.interface)]));
+  const overlapping = new Set();
+  for (let left = 0; left < segmentRules.length; left += 1) {
+    for (let right = left + 1; right < segmentRules.length; right += 1) {
+      const leftRule = segmentRules[left];
+      const rightRule = segmentRules[right];
+      const leftEndpoint = routerEndpoints.get(leftRule.key);
+      const rightEndpoint = routerEndpoints.get(rightRule.key);
+      if (endpointValid(leftEndpoint, leftRule.prefix) && endpointValid(rightEndpoint, rightRule.prefix) && rangesOverlap(leftEndpoint, rightEndpoint)) {
+        overlapping.add(leftRule.key);
+        overlapping.add(rightRule.key);
+      }
+    }
+  }
+
+  for (const rule of segmentRules) {
+    const device = byVmid.get(rule.vmid);
+    const observation = observations.get(rule.vmid);
+    const check = upsertCheck(device, rule.id, {
+      title: rule.title,
+      method: "EcoRouter serial CLI + проверка топологии",
+      expected: `RFC1918 /${rule.prefix}${rule.peerVmid ? " · один сегмент с соседним устройством" : " · отдельный сегмент"}`
+    });
+    const endpoint = routerEndpoints.get(rule.key);
+    let status = "fail";
+    let evidence = `${rule.interface}: ${endpoint ? `${endpoint.address}/${endpoint.prefix}` : "адрес не найден"}`;
+    if (observation.addressError) {
+      status = "unknown";
+      evidence = `Serial CLI недоступен · ${observation.addressError}`;
+    } else if (!endpointValid(endpoint, rule.prefix)) {
+      evidence += ` · требуется частный доступный адрес /${rule.prefix}`;
+    } else if (overlapping.has(rule.key)) {
+      evidence += " · сеть пересекается с другим сегментом";
+    } else if (rule.peerVmid) {
+      const peer = observations.get(rule.peerVmid);
+      if (peer.addressError) {
+        status = "unknown";
+        evidence += ` · сосед недоступен: ${peer.addressError}`;
+      } else {
+        const peerEndpoint = peer.addresses.find((candidate) =>
+          candidate.prefix === rule.prefix
+          && isPrivateIpv4(candidate.address)
+          && isUsableHost(candidate.address, rule.prefix)
+          && candidate.address !== endpoint.address
+          && sameSubnet(candidate.address, endpoint.address, rule.prefix)
+        );
+        if (peerEndpoint) {
+          status = "pass";
+          evidence += ` ↔ ${byVmid.get(rule.peerVmid).name}:${peerEndpoint.address}/${peerEndpoint.prefix}`;
+        } else {
+          evidence += ` · у ${byVmid.get(rule.peerVmid).name} нет второго адреса в этой подсети (${describeAddresses(peer)})`;
+        }
+      }
+    } else {
+      status = "pass";
+      evidence += " · RFC1918 и маска корректны";
+    }
+    setResult(check, status, evidence, Math.max(1, Math.round(performance.now() - startedAt)));
+    report({ kind: "result", vmid: device.vmid, device: device.name, check: { ...check }, message: `${check.title}: ${status === "pass" ? "выполнено" : status === "fail" ? "ошибка" : "недоступно"} · ${evidence}` });
+  }
+
+  for (const rule of linuxRules) {
+    const device = byVmid.get(rule.vmid);
+    const observation = observations.get(rule.vmid);
+    const routerObservation = observations.get(rule.routerVmid);
+    const routerEndpoint = findInterface(routerObservation, rule.routerInterface);
+    const addressCheck = upsertCheck(device, `${device.id}-ipv4`, {
+      title: "IPv4 и связь с маршрутизатором",
+      method: "QEMU Guest Agent + проверка топологии",
+      expected: `RFC1918 /${rule.prefix} · одна подсеть с ${byVmid.get(rule.routerVmid).name}`
+    });
+    let addressStatus = "fail";
+    let endpoint = null;
+    let addressEvidence = describeAddresses(observation);
+    if (observation.addressError || routerObservation.addressError) {
+      addressStatus = "unknown";
+      addressEvidence = `Данные недоступны · ${observation.addressError || routerObservation.addressError}`;
+    } else if (!endpointValid(routerEndpoint, rule.prefix)) {
+      addressEvidence += ` · на ${byVmid.get(rule.routerVmid).name}:${rule.routerInterface} нет корректного /${rule.prefix}`;
+    } else {
+      endpoint = observation.addresses.find((candidate) =>
+        candidate.prefix === rule.prefix
+        && isPrivateIpv4(candidate.address)
+        && isUsableHost(candidate.address, rule.prefix)
+        && candidate.address !== routerEndpoint.address
+        && sameSubnet(candidate.address, routerEndpoint.address, rule.prefix)
+      );
+      if (endpoint) {
+        addressStatus = "pass";
+        addressEvidence = `${device.name}:${endpoint.address}/${endpoint.prefix} ↔ ${byVmid.get(rule.routerVmid).name}:${routerEndpoint.address}/${routerEndpoint.prefix}`;
+      } else {
+        addressEvidence += ` · нет адреса в подсети ${rule.routerInterface} маршрутизатора`;
+      }
+    }
+    setResult(addressCheck, addressStatus, addressEvidence, Math.max(1, Math.round(performance.now() - startedAt)));
+    report({ kind: "result", vmid: device.vmid, device: device.name, check: { ...addressCheck }, message: `${addressCheck.title}: ${addressStatus === "pass" ? "выполнено" : addressStatus === "fail" ? "ошибка" : "недоступно"} · ${addressEvidence}` });
+
+    const gatewayCheck = upsertCheck(device, `${device.id}-gateway`, {
+      title: "Шлюз по умолчанию",
+      method: "QEMU Guest Agent + проверка топологии",
+      expected: `адрес ${byVmid.get(rule.routerVmid).name} в той же подсети`
+    });
+    let gatewayStatus = "fail";
+    let gatewayEvidence = `получено=${observation.gateway || "не найден"}`;
+    if (observation.gatewayError || routerObservation.addressError) {
+      gatewayStatus = "unknown";
+      gatewayEvidence = `Данные недоступны · ${observation.gatewayError || routerObservation.addressError}`;
+    } else if (routerEndpoint && observation.gateway === routerEndpoint.address && endpoint && sameSubnet(observation.gateway, endpoint.address, rule.prefix)) {
+      gatewayStatus = "pass";
+      gatewayEvidence = `шлюз=${observation.gateway} · совпадает с ${byVmid.get(rule.routerVmid).name}:${rule.routerInterface}`;
+    } else {
+      gatewayEvidence += ` · адрес маршрутизатора=${routerEndpoint?.address || "не найден"}`;
+    }
+    setResult(gatewayCheck, gatewayStatus, gatewayEvidence, Math.max(1, Math.round(performance.now() - startedAt)));
+    report({ kind: "result", vmid: device.vmid, device: device.name, check: { ...gatewayCheck }, message: `${gatewayCheck.title}: ${gatewayStatus === "pass" ? "выполнено" : gatewayStatus === "fail" ? "ошибка" : "недоступно"} · ${gatewayEvidence}` });
   }
 }
 
-export { ecoRouterRules, ipv4Addresses, routeGateway };
+export { ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap };

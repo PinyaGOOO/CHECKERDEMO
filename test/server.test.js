@@ -5,7 +5,7 @@ import { ProxmoxSshAdapter } from "../src/adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-server.js";
 import { applyHostnameChecks, recalculateDeviceScores } from "../src/checks/hostnames.js";
 import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
-import { ipv4Addresses, routeGateway } from "../src/checks/basic-network.js";
+import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
 
 test("assessment scores are internally consistent", () => {
   const data = snapshot();
@@ -93,4 +93,69 @@ test("basic network helpers ignore loopback and parse default route", () => {
   assert.deepEqual(addresses, [{ name: "ens19", address: "192.168.100.2", prefix: 27 }]);
   assert.equal(routeGateway({ "out-data": "default via 192.168.100.1 dev ens19\n" }), "192.168.100.1");
   assert.equal(routeGateway({ exitcode: 0 }), null);
+});
+
+test("topology helpers validate RFC1918 endpoints and subnet relationships", () => {
+  assert.equal(isPrivateIpv4("10.21.30.1"), true);
+  assert.equal(isPrivateIpv4("172.31.255.254"), true);
+  assert.equal(isPrivateIpv4("192.168.42.10"), true);
+  assert.equal(isPrivateIpv4("8.8.8.8"), false);
+  assert.equal(isUsableHost("10.0.0.1", 28), true);
+  assert.equal(isUsableHost("10.0.0.0", 28), false);
+  assert.equal(isUsableHost("10.0.0.15", 28), false);
+  assert.equal(sameSubnet("172.20.8.1", "172.20.8.14", 28), true);
+  assert.equal(sameSubnet("172.20.8.1", "172.20.8.17", 28), false);
+  assert.equal(rangesOverlap({ address: "10.0.0.1", prefix: 24 }, { address: "10.0.0.129", prefix: 25 }), true);
+  assert.equal(rangesOverlap({ address: "10.0.0.1", prefix: 24 }, { address: "10.0.1.1", prefix: 24 }), false);
+});
+
+test("EcoRouter interface parser supports brief and configuration output", () => {
+  const output = `
+Interface  IP-Address      Status
+te0        172.20.8.2/28   up
+vl100      10.50.0.1/27    up
+interface vl200
+ ip address 192.168.77.1/24
+`;
+  assert.deepEqual(parseEcoRouterInterfaces(output), [
+    { name: "te0", address: "172.20.8.2", prefix: 28 },
+    { name: "vl100", address: "10.50.0.1", prefix: 27 },
+    { name: "vl200", address: "192.168.77.1", prefix: 24 }
+  ]);
+});
+
+test("topology check accepts arbitrary non-overlapping RFC1918 networks", async () => {
+  const data = snapshot();
+  data.devices.forEach((device) => { device.state = "running"; });
+  const linux = new Map([
+    [100, [["ens20", "172.20.8.1", 28], ["ens21", "172.20.9.1", 28]]],
+    [104, [["ens19", "10.50.0.2", 27]]],
+    [105, [["ens19", "192.168.55.2", 28]]],
+    [106, [["ens19", "172.22.0.2", 24]]]
+  ]);
+  const gateways = new Map([[104, "10.50.0.1"], [105, "192.168.55.1"], [106, "172.22.0.1"]]);
+  const adapter = {
+    async guestCommand(vmid) {
+      return linux.get(vmid).map(([name, address, prefix]) => ({
+        name,
+        "ip-addresses": [{ "ip-address": address, "ip-address-type": "ipv4", prefix }]
+      }));
+    },
+    async guestExec(vmid) {
+      return { exitcode: 0, "out-data": `default via ${gateways.get(vmid)} dev ens19\n` };
+    },
+    async vmConsoleCredentials() { return { username: "test", password: "test" }; }
+  };
+  const serial = {
+    async getIpInterfaceBrief(vmid) {
+      return vmid === 101
+        ? "te0 172.20.8.2/28 up\nvl100 10.50.0.1/27 up\nvl200 172.22.0.1/24 up\nvl999 192.168.99.1/29 up\n"
+        : "te0 172.20.9.2/28 up\nint1 192.168.55.1/28 up\n";
+    }
+  };
+  const events = [];
+  await applyTopologyNetworkChecks(data, adapter, serial, (event) => events.push(event));
+  const results = events.filter((event) => event.kind === "result");
+  assert.equal(results.length, 12);
+  assert.ok(results.every((event) => event.check.status === "pass"));
 });

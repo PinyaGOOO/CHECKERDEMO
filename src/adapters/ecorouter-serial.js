@@ -75,4 +75,11 @@ export class EcoRouterSerialAdapter {
   async getIpInterfaceBrief(vmid, credentials) {
     return this.runCommand(vmid, credentials, "show ip interface brief", 1_200);
   }
+
+  async getNetworkConfiguration(vmid, credentials) {
+    const brief = await this.getIpInterfaceBrief(vmid, credentials);
+    if (/\b\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}\b/.test(brief)) return brief;
+    const runningConfig = await this.runCommand(vmid, credentials, "show running-config", 2_000);
+    return `${brief}\n${runningConfig}`;
+  }
 }
