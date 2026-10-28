@@ -1,5 +1,4 @@
 const linuxRules = [
-  { vmid: 100, anyIpv4: true },
   { vmid: 104, address: "192.168.100.2", prefix: 27, gateway: "192.168.100.1" },
   { vmid: 105, address: "192.168.0.2", prefix: 28, gateway: "192.168.0.1" },
   { vmid: 106, address: "192.168.200.2", prefix: 24, gateway: "192.168.200.1" }
@@ -55,11 +54,11 @@ export async function applyLinuxNetworkChecks(assessment, adapter) {
     const device = assessment.devices.find((item) => item.vmid === rule.vmid);
     if (!device) return;
 
-    const addressId = rule.anyIpv4 ? "isp-ipv4" : `${device.id}-ipv4`;
+    const addressId = `${device.id}-ipv4`;
     const addressCheck = upsertCheck(device, addressId, {
-      title: rule.anyIpv4 ? "IPv4 настроен" : "IPv4 и префикс",
+      title: "IPv4 и префикс",
       method: "QEMU Guest Agent",
-      expected: rule.anyIpv4 ? "любой IPv4, кроме loopback" : `${rule.address}/${rule.prefix}`
+      expected: `${rule.address}/${rule.prefix}`
     });
     const gatewayCheck = rule.gateway ? upsertCheck(device, `${device.id}-gateway`, {
       title: "Шлюз по умолчанию",
@@ -78,9 +77,7 @@ export async function applyLinuxNetworkChecks(assessment, adapter) {
     try {
       const interfaces = await adapter.guestCommand(rule.vmid, "network-get-interfaces");
       const addresses = ipv4Addresses(interfaces);
-      const addressPassed = rule.anyIpv4
-        ? addresses.length > 0
-        : addresses.some((entry) => entry.address === rule.address && entry.prefix === rule.prefix);
+      const addressPassed = addresses.some((entry) => entry.address === rule.address && entry.prefix === rule.prefix);
       const rendered = addresses.length
         ? addresses.map((entry) => `${entry.name}:${entry.address}/${entry.prefix}`).join(", ")
         : "не найден";
