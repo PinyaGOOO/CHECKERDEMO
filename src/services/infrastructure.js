@@ -1,6 +1,7 @@
 import { ProxmoxSshAdapter } from "../adapters/proxmox-ssh.js";
 import { EcoRouterSerialAdapter } from "../adapters/ecorouter-serial.js";
 import { applyEcoRouterHostnameChecks, applyHostnameChecks, recalculateDeviceScores } from "../checks/hostnames.js";
+import { applyEcoRouterNetworkChecks, applyLinuxNetworkChecks } from "../checks/basic-network.js";
 
 const adapter = new ProxmoxSshAdapter({
   alias: process.env.CHECKER_SSH_ALIAS || "checker",
@@ -47,8 +48,10 @@ export async function applyLiveInfrastructure(assessment) {
       fetchedAt: infrastructure.fetchedAt
     };
     await applyHostnameChecks(assessment, adapter);
+    await applyLinuxNetworkChecks(assessment, adapter);
     if (adapter.transport === "local") {
       await applyEcoRouterHostnameChecks(assessment, adapter, ecoRouterSerial);
+      await applyEcoRouterNetworkChecks(assessment, adapter, ecoRouterSerial);
     }
     recalculateDeviceScores(assessment);
   } catch (error) {

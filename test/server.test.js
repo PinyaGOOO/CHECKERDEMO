@@ -5,6 +5,7 @@ import { ProxmoxSshAdapter } from "../src/adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-server.js";
 import { applyHostnameChecks, recalculateDeviceScores } from "../src/checks/hostnames.js";
 import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
+import { ipv4Addresses, routeGateway } from "../src/checks/basic-network.js";
 
 test("assessment scores are internally consistent", () => {
   const data = snapshot();
@@ -82,4 +83,14 @@ test("hostname checks compare case-insensitively and preserve unavailable state"
 test("EcoRouter serial output parser extracts hostname", () => {
   const output = "ecorouter>show hostname\r\n\recorouter\x1b[m\r\n\recorouter>";
   assert.equal(parseEcoRouterHostname(output), "ecorouter");
+});
+
+test("basic network helpers ignore loopback and parse default route", () => {
+  const addresses = ipv4Addresses([
+    { name: "lo", "ip-addresses": [{ "ip-address": "127.0.0.1", "ip-address-type": "ipv4", prefix: 8 }] },
+    { name: "ens19", "ip-addresses": [{ "ip-address": "192.168.100.2", "ip-address-type": "ipv4", prefix: 27 }] }
+  ]);
+  assert.deepEqual(addresses, [{ name: "ens19", address: "192.168.100.2", prefix: 27 }]);
+  assert.equal(routeGateway({ "out-data": "default via 192.168.100.1 dev ens19\n" }), "192.168.100.1");
+  assert.equal(routeGateway({ exitcode: 0 }), null);
 });

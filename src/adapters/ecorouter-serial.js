@@ -25,7 +25,7 @@ export class EcoRouterSerialAdapter {
     this.timeout = timeout;
   }
 
-  async getHostname(vmid, credentials) {
+  async runCommand(vmid, credentials, command, wait = 900) {
     const socketPath = `${this.socketDirectory}/${vmid}.serial0`;
     const socket = net.createConnection({ path: socketPath });
     const chunks = [];
@@ -56,14 +56,23 @@ export class EcoRouterSerialAdapter {
       }
 
       chunks.length = 0;
-      socket.write("show hostname\r\n");
-      await delay(900);
-      const hostname = parseEcoRouterHostname(chunks.join(""));
-      if (!hostname) throw new Error("EcoRouter did not return hostname");
-      return hostname;
+      socket.write(`${command}\r\n`);
+      await delay(wait);
+      return cleanTerminalOutput(chunks.join(""));
     } finally {
       clearTimeout(timer);
       socket.end();
     }
+  }
+
+  async getHostname(vmid, credentials) {
+    const output = await this.runCommand(vmid, credentials, "show hostname");
+    const hostname = parseEcoRouterHostname(output);
+      if (!hostname) throw new Error("EcoRouter did not return hostname");
+      return hostname;
+  }
+
+  async getIpInterfaceBrief(vmid, credentials) {
+    return this.runCommand(vmid, credentials, "show ip interface brief", 1_200);
   }
 }
