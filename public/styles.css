@@ -97,9 +97,8 @@ main { max-width: 1500px; margin: auto; padding: 38px 34px 56px; }
 .device-icon::after { content: "▶"; position: absolute; right: -5px; bottom: -5px; color: var(--green); font-size: 10px; }
 .device-row.stopped .device-icon { opacity: .55; }
 .device-row.stopped .device-icon::after { content: "■"; color: #77869b; font-size: 7px; }
-.device-copy strong, .device-copy small { display: block; }
+.device-copy strong { display: block; }
 .device-copy strong { font-size: 13px; }
-.device-copy small { color: var(--muted); font-size: 10px; }
 .device-result { font-size: 11px; color: #9daabd; }
 .device-result i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 7px; }
 .device-result i.pass { background: var(--green); }

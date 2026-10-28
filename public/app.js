@@ -62,7 +62,7 @@ function renderDevices() {
     row.setAttribute("role", "listitem");
     row.innerHTML = `
       <span class="device-icon" style="border-color:${device.color}"></span>
-      <span class="device-copy"><strong>${device.vmid} · ${device.name}</strong><small>${device.role}</small></span>
+      <span class="device-copy"><strong>${device.vmid} · ${device.name}</strong></span>
       <span class="device-result">${device.score}/${device.assessedMaxScore ?? device.maxScore}<i class="${status}"></i></span>`;
     row.addEventListener("click", () => selectDevice(device.id));
     list.append(row);
