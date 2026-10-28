@@ -1,5 +1,4 @@
 import { ProxmoxSshAdapter } from "../adapters/proxmox-ssh.js";
-import { applyCheckResults, collectHqServerChecks } from "../checks/hq-server.js";
 import { EcoRouterSerialAdapter } from "../adapters/ecorouter-serial.js";
 import { applyEcoRouterHostnameChecks, applyHostnameChecks, recalculateDeviceScores } from "../checks/hostnames.js";
 
@@ -47,10 +46,6 @@ export async function applyLiveInfrastructure(assessment) {
       node: infrastructure.node,
       fetchedAt: infrastructure.fetchedAt
     };
-    const hqServer = assessment.devices.find((device) => device.vmid === 104);
-    if (hqServer?.state === "running") {
-      applyCheckResults(hqServer, await collectHqServerChecks(adapter));
-    }
     await applyHostnameChecks(assessment, adapter);
     if (adapter.transport === "local") {
       await applyEcoRouterHostnameChecks(assessment, adapter, ecoRouterSerial);
