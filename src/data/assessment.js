@@ -3,7 +3,7 @@ const checkedAt = () => new Date(Date.now() - 4 * 60 * 1000).toISOString();
 export const assessment = {
   lab: {
     id: "de-27-alt-ideco",
-    title: "Демоэкзамен — стенд 27",
+    title: "Демоэкзамен",
     subtitle: "Модуль 1 · Сетевая инфраструктура",
     mode: "mock",
     startedAt: "2026-10-28T05:30:00.000Z",
