@@ -13,6 +13,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; min-width: 320px; background: radial-gradient(circle at 72% -20%, #162b41 0, transparent 42%), var(--bg); color: var(--text); font: 14px/1.45 Inter, "Segoe UI", sans-serif; }
 button { font: inherit; }
 .app-shell { min-height: 100vh; }
