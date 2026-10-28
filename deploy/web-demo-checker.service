@@ -11,6 +11,7 @@ WorkingDirectory=/opt/web-demo-checker
 ExecStart=/usr/bin/node /opt/web-demo-checker/src/server.js
 Environment=NODE_ENV=production
 Environment=PORT=8007
+Environment=CHECKER_MODE=live
 Environment=CHECKER_TRANSPORT=local
 Restart=on-failure
 RestartSec=3
