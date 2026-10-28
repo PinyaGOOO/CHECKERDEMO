@@ -30,7 +30,7 @@ async function serveStatic(pathname, response) {
     const content = await readFile(resolved);
     response.writeHead(200, {
       "Content-Type": types[extname(resolved)] || "application/octet-stream",
-      "Cache-Control": extname(resolved) === ".html" ? "no-cache" : "public, max-age=300"
+      "Cache-Control": "no-cache"
     });
     response.end(content);
     return true;
