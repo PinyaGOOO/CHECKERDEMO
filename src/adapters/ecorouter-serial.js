@@ -82,4 +82,8 @@ export class EcoRouterSerialAdapter {
     const runningConfig = await this.runCommand(vmid, credentials, "show running-config", 2_000);
     return `${brief}\n${runningConfig}`;
   }
+
+  async getRunningConfig(vmid, credentials) {
+    return this.runCommand(vmid, credentials, "show running-config", 2_500);
+  }
 }

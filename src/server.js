@@ -8,7 +8,7 @@ import { applyLiveInfrastructure, getInfrastructure, resetInfrastructureCache } 
 const root = fileURLToPath(new URL("../public/", import.meta.url));
 const port = Number(process.env.PORT || 8007);
 const runs = new Map();
-const assessmentCheckTotal = 19;
+const assessmentCheckTotal = 27;
 
 const types = {
   ".html": "text/html; charset=utf-8",

@@ -6,6 +6,7 @@ import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-serve
 import { applyHostnameChecks, recalculateDeviceScores } from "../src/checks/hostnames.js";
 import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
 import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
+import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
 
 test("assessment scores are internally consistent", () => {
   const data = snapshot();
@@ -158,4 +159,26 @@ test("topology check accepts arbitrary non-overlapping RFC1918 networks", async 
   const results = events.filter((event) => event.kind === "result");
   assert.equal(results.length, 12);
   assert.ok(results.every((event) => event.check.status === "pass"));
+});
+
+test("internet access helpers validate dynamic NAT and EcoRouter WAN binding", () => {
+  const nat = "-A POSTROUTING -s 172.20.8.0/28 -o ens19 -j MASQUERADE\n";
+  assert.equal(networkCidr("172.20.8.14", 28), "172.20.8.0/28");
+  assert.equal(hasMasquerade(nat, "172.20.8.0/28"), true);
+  assert.equal(hasMasquerade(nat, "172.20.9.0/28"), false);
+  assert.equal(hasMasquerade(nat.replace("ens19", "ens20"), "172.20.8.0/28"), false);
+
+  const config = `
+interface uplink
+ ip address 172.20.8.2/28
+port te0
+ service-instance te0/uplink
+  encapsulation untagged
+  connect ip interface uplink
+port te1
+ service-instance te1/lan
+`;
+  assert.equal(te0BindingValid(config, "uplink"), true);
+  assert.equal(te0BindingValid(config.replace("encapsulation untagged", "encapsulation dot1q 100"), "uplink"), false);
+  assert.equal(te0BindingValid(config, "wrong-interface"), false);
 });

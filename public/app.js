@@ -183,7 +183,7 @@ async function runAssessment() {
   monitor.hidden = false;
   monitor.className = "run-monitor";
   $("#command-log").innerHTML = "";
-  setRunProgress(0, 19, "Подготовка проверки…");
+  setRunProgress(0, 27, "Подготовка проверки…");
   monitor.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
   try {

@@ -1,9 +1,9 @@
 const segmentRules = [
-  { key: "hq-wan", vmid: 101, id: "hq-wan-ipv4", title: "WAN ↔ ISP", interface: "te0", prefix: 28, peerVmid: 100 },
+  { key: "hq-wan", vmid: 101, id: "hq-wan-ipv4", title: "WAN ↔ ISP", prefix: 28, peerVmid: 100, peerInterface: "ens20" },
   { key: "hq-vlan100", vmid: 101, id: "hq-vlan100-ipv4", title: "VLAN 100 · HQ-SRV", interface: "vl100", prefix: 27, peerVmid: 104 },
   { key: "hq-vlan200", vmid: 101, id: "hq-vlan200-ipv4", title: "VLAN 200 · HQ-CLI", interface: "vl200", prefix: 24, peerVmid: 106 },
   { key: "hq-vlan999", vmid: 101, id: "hq-vlan999-ipv4", title: "VLAN 999 · управление", interface: "vl999", prefix: 29 },
-  { key: "br-wan", vmid: 102, id: "br-wan-ipv4", title: "WAN ↔ ISP", interface: "te0", prefix: 28, peerVmid: 100 },
+  { key: "br-wan", vmid: 102, id: "br-wan-ipv4", title: "WAN ↔ ISP", prefix: 28, peerVmid: 100, peerInterface: "ens21" },
   { key: "br-lan", vmid: 102, id: "br-lan-ipv4", title: "LAN ↔ BR-SRV", interface: "int1", prefix: 28, peerVmid: 105 }
 ];
 
@@ -105,6 +105,18 @@ function findInterface(observation, name) {
   return observation?.addresses?.find((entry) => entry.name.toLowerCase() === name.toLowerCase()) || null;
 }
 
+function findRouterEndpoint(rule, observations) {
+  const router = observations.get(rule.vmid);
+  if (rule.interface) return findInterface(router, rule.interface);
+  const peer = findInterface(observations.get(rule.peerVmid), rule.peerInterface);
+  if (!peer || peer.prefix !== rule.prefix) return null;
+  return router?.addresses?.find((candidate) =>
+    candidate.prefix === rule.prefix
+    && candidate.address !== peer.address
+    && sameSubnet(candidate.address, peer.address, rule.prefix)
+  ) || null;
+}
+
 function endpointValid(endpoint, prefix) {
   return Boolean(endpoint && endpoint.prefix === prefix && isPrivateIpv4(endpoint.address) && isUsableHost(endpoint.address, prefix));
 }
@@ -179,7 +191,7 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
     observations.set(vmid, await collectEcoRouter(byVmid.get(vmid), adapter, serial, report));
   }));
 
-  const routerEndpoints = new Map(segmentRules.map((rule) => [rule.key, findInterface(observations.get(rule.vmid), rule.interface)]));
+  const routerEndpoints = new Map(segmentRules.map((rule) => [rule.key, findRouterEndpoint(rule, observations)]));
   const overlapping = new Set();
   for (let left = 0; left < segmentRules.length; left += 1) {
     for (let right = left + 1; right < segmentRules.length; right += 1) {
@@ -204,7 +216,8 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
     });
     const endpoint = routerEndpoints.get(rule.key);
     let status = "fail";
-    let evidence = `${rule.interface}: ${endpoint ? `${endpoint.address}/${endpoint.prefix}` : "адрес не найден"}`;
+    const interfaceLabel = endpoint?.name || rule.interface || "WAN";
+    let evidence = `${interfaceLabel}: ${endpoint ? `${endpoint.address}/${endpoint.prefix}` : "адрес не найден"}`;
     if (observation.addressError) {
       status = "unknown";
       evidence = `Serial CLI недоступен · ${observation.addressError}`;
@@ -219,6 +232,8 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
         evidence += ` · сосед недоступен: ${peer.addressError}`;
       } else {
         const peerEndpoint = peer.addresses.find((candidate) =>
+          (!rule.peerInterface || candidate.name.toLowerCase() === rule.peerInterface.toLowerCase())
+          &&
           candidate.prefix === rule.prefix
           && isPrivateIpv4(candidate.address)
           && isUsableHost(candidate.address, rule.prefix)
