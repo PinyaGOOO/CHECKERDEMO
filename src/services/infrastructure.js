@@ -19,8 +19,9 @@ export async function getInfrastructure({ fresh = false } = {}) {
   return cache;
 }
 
-export async function applyLiveInfrastructure(assessment) {
+export async function applyLiveInfrastructure(assessment, { report = () => {} } = {}) {
   try {
+    report({ kind: "command", command: "pvesh get /cluster/resources --type vm", message: "Получаем состояние виртуальных машин" });
     const infrastructure = await getInfrastructure();
     const byVmid = new Map(infrastructure.vms.map((vm) => [vm.vmid, vm]));
     for (const device of assessment.devices) {
@@ -47,11 +48,11 @@ export async function applyLiveInfrastructure(assessment) {
       node: infrastructure.node,
       fetchedAt: infrastructure.fetchedAt
     };
-    await applyHostnameChecks(assessment, adapter);
-    await applyLinuxNetworkChecks(assessment, adapter);
+    await applyHostnameChecks(assessment, adapter, report);
+    await applyLinuxNetworkChecks(assessment, adapter, report);
     if (adapter.transport === "local") {
-      await applyEcoRouterHostnameChecks(assessment, adapter, ecoRouterSerial);
-      await applyEcoRouterNetworkChecks(assessment, adapter, ecoRouterSerial);
+      await applyEcoRouterHostnameChecks(assessment, adapter, ecoRouterSerial, report);
+      await applyEcoRouterNetworkChecks(assessment, adapter, ecoRouterSerial, report);
     }
     recalculateDeviceScores(assessment);
   } catch (error) {

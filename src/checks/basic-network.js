@@ -49,7 +49,7 @@ function setResult(check, passed, evidence, duration) {
   });
 }
 
-export async function applyLinuxNetworkChecks(assessment, adapter) {
+export async function applyLinuxNetworkChecks(assessment, adapter, report = () => {}) {
   await Promise.all(linuxRules.map(async (rule) => {
     const device = assessment.devices.find((item) => item.vmid === rule.vmid);
     if (!device) return;
@@ -69,12 +69,14 @@ export async function applyLinuxNetworkChecks(assessment, adapter) {
     if (device.state !== "running") {
       for (const check of [addressCheck, gatewayCheck].filter(Boolean)) {
         Object.assign(check, { status: "unknown", score: 0, source: "unavailable", duration: null, evidence: "VM остановлена" });
+        report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: VM остановлена` });
       }
       return;
     }
 
     const startedAt = performance.now();
     try {
+      report({ kind: "command", vmid: rule.vmid, device: device.name, command: `qm guest cmd ${rule.vmid} network-get-interfaces`, message: `Читаем IPv4-интерфейсы ${device.name}` });
       const interfaces = await adapter.guestCommand(rule.vmid, "network-get-interfaces");
       const addresses = ipv4Addresses(interfaces);
       const addressPassed = addresses.some((entry) => entry.address === rule.address && entry.prefix === rule.prefix);
@@ -82,11 +84,14 @@ export async function applyLinuxNetworkChecks(assessment, adapter) {
         ? addresses.map((entry) => `${entry.name}:${entry.address}/${entry.prefix}`).join(", ")
         : "не найден";
       setResult(addressCheck, addressPassed, `ожидается=${addressCheck.expected} · получено=${rendered}`, Math.max(1, Math.round(performance.now() - startedAt)));
+      report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...addressCheck }, message: `${addressCheck.title}: ${addressCheck.status === "pass" ? "выполнено" : "ошибка"}` });
 
       if (gatewayCheck) {
+        report({ kind: "command", vmid: rule.vmid, device: device.name, command: `/usr/sbin/ip -4 route show default`, message: `Проверяем шлюз ${device.name}` });
         const route = await adapter.guestExec(rule.vmid, "/usr/sbin/ip", ["-4", "route", "show", "default"]);
         const actualGateway = routeGateway(route);
         setResult(gatewayCheck, actualGateway === rule.gateway, `ожидается=${rule.gateway} · получено=${actualGateway || "не найден"}`, Math.max(1, Math.round(performance.now() - startedAt)));
+        report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...gatewayCheck }, message: `${gatewayCheck.title}: ${gatewayCheck.status === "pass" ? "выполнено" : "ошибка"}` });
       }
     } catch (error) {
       for (const check of [addressCheck, gatewayCheck].filter(Boolean)) {
@@ -96,11 +101,14 @@ export async function applyLinuxNetworkChecks(assessment, adapter) {
           evidence: `Канал QGA недоступен · ${errorSummary(error)}`
         });
       }
+      for (const check of [addressCheck, gatewayCheck].filter(Boolean)) {
+        report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: недоступно` });
+      }
     }
   }));
 }
 
-export async function applyEcoRouterNetworkChecks(assessment, proxmox, serial) {
+export async function applyEcoRouterNetworkChecks(assessment, proxmox, serial, report = () => {}) {
   for (const vmid of [101, 102]) {
     const device = assessment.devices.find((item) => item.vmid === vmid);
     if (!device) continue;
@@ -112,18 +120,23 @@ export async function applyEcoRouterNetworkChecks(assessment, proxmox, serial) {
     }));
 
     if (device.state !== "running") {
-      checks.forEach((check) => Object.assign(check, { status: "unknown", score: 0, source: "unavailable", duration: null, evidence: "VM остановлена" }));
+      checks.forEach((check) => {
+        Object.assign(check, { status: "unknown", score: 0, source: "unavailable", duration: null, evidence: "VM остановлена" });
+        report({ kind: "result", vmid, device: device.name, check: { ...check }, message: `${check.title}: VM остановлена` });
+      });
       continue;
     }
 
     const startedAt = performance.now();
     try {
+      report({ kind: "command", vmid, device: device.name, command: "show ip interface brief", message: `Читаем адреса ${device.name} через serial CLI` });
       const credentials = await proxmox.vmConsoleCredentials(vmid);
       const output = await serial.getIpInterfaceBrief(vmid, credentials);
       for (let index = 0; index < rules.length; index += 1) {
         const expected = rules[index].cidr;
         const passed = output.includes(expected);
         setResult(checks[index], passed, `ожидается=${expected} · ${passed ? "адрес найден" : "адрес не найден"}`, Math.max(1, Math.round(performance.now() - startedAt)));
+        report({ kind: "result", vmid, device: device.name, check: { ...checks[index] }, message: `${checks[index].title}: ${passed ? "выполнено" : "ошибка"}` });
       }
     } catch (error) {
       checks.forEach((check) => Object.assign(check, {
@@ -131,6 +144,7 @@ export async function applyEcoRouterNetworkChecks(assessment, proxmox, serial) {
         duration: Math.max(1, Math.round(performance.now() - startedAt)),
         evidence: `Serial CLI недоступен · ${errorSummary(error)}`
       }));
+      checks.forEach((check) => report({ kind: "result", vmid, device: device.name, check: { ...check }, message: `${check.title}: недоступно` }));
     }
   }
 }

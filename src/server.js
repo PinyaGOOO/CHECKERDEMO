@@ -7,6 +7,8 @@ import { applyLiveInfrastructure, getInfrastructure, resetInfrastructureCache } 
 
 const root = fileURLToPath(new URL("../public/", import.meta.url));
 const port = Number(process.env.PORT || 8007);
+const runs = new Map();
+const assessmentCheckTotal = 19;
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -19,6 +21,59 @@ const types = {
 function json(response, status, body) {
   response.writeHead(status, { "Content-Type": types[".json"], "Cache-Control": "no-store" });
   response.end(JSON.stringify(body));
+}
+
+function sendEvent(response, payload) {
+  response.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function publishRunEvent(run, payload) {
+  const event = { sequence: run.events.length + 1, at: new Date().toISOString(), ...payload };
+  run.events.push(event);
+  for (const client of run.clients) sendEvent(client, event);
+  return event;
+}
+
+function beginRun() {
+  const run = {
+    id: `run-${Date.now()}`,
+    status: "running",
+    startedAt: new Date().toISOString(),
+    completed: 0,
+    total: assessmentCheckTotal,
+    events: [],
+    clients: new Set(),
+    assessment: null
+  };
+  runs.set(run.id, run);
+
+  queueMicrotask(async () => {
+    try {
+      const assessment = await applyLiveInfrastructure(snapshot(), {
+        report(entry) {
+          if (entry.kind === "result") run.completed = Math.min(run.total, run.completed + 1);
+          publishRunEvent(run, { type: entry.kind, completed: run.completed, total: run.total, ...entry });
+        }
+      });
+      assessment.lab.checkedAt = new Date().toISOString();
+      run.assessment = assessment;
+      run.completed = run.total;
+      run.status = "completed";
+      run.completedAt = new Date().toISOString();
+      publishRunEvent(run, { type: "complete", completed: run.total, total: run.total, assessment });
+    } catch (error) {
+      run.status = "failed";
+      run.completedAt = new Date().toISOString();
+      run.error = error.message;
+      publishRunEvent(run, { type: "error", completed: run.completed, total: run.total, message: error.message });
+    } finally {
+      for (const client of run.clients) client.end();
+      run.clients.clear();
+    }
+  });
+
+  while (runs.size > 20) runs.delete(runs.keys().next().value);
+  return run;
 }
 
 async function serveStatic(pathname, response) {
@@ -61,15 +116,33 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "POST" && url.pathname === "/api/runs") {
     resetInfrastructureCache();
-    const runId = `run-${Date.now()}`;
-    return json(response, 202, { id: runId, status: "running", startedAt: new Date().toISOString() });
+    const run = beginRun();
+    return json(response, 202, { id: run.id, status: run.status, startedAt: run.startedAt, completed: 0, total: run.total });
   }
 
-  if (request.method === "GET" && url.pathname.startsWith("/api/runs/")) {
+  const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)(\/events)?$/);
+  if (request.method === "GET" && runMatch) {
+    const run = runs.get(runMatch[1]);
+    if (!run) return json(response, 404, { error: "Run not found" });
+    if (runMatch[2] === "/events") {
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      response.write(": connected\n\n");
+      run.events.forEach((event) => sendEvent(response, event));
+      if (run.status === "running") {
+        run.clients.add(response);
+        request.on("close", () => run.clients.delete(response));
+      } else {
+        response.end();
+      }
+      return;
+    }
     return json(response, 200, {
-      id: url.pathname.split("/").at(-1),
-      status: "completed",
-      assessment: await applyLiveInfrastructure(snapshot())
+      id: run.id, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt,
+      completed: run.completed, total: run.total, error: run.error, assessment: run.assessment
     });
   }
 

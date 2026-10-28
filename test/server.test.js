@@ -73,11 +73,11 @@ test("hostname checks compare case-insensitively and preserve unavailable state"
   await applyHostnameChecks(data, fakeAdapter);
   recalculateDeviceScores(data);
   const isp = data.devices.find((device) => device.vmid === 100);
-  const router = data.devices.find((device) => device.vmid === 101);
+  const unavailable = data.devices.find((device) => device.vmid === 103);
   assert.equal(isp.checks.find((check) => check.id === "isp-hostname").status, "pass");
   assert.equal(isp.assessedMaxScore, 1);
-  assert.equal(router.checks.find((check) => check.id === "hq-hostname").source, "unavailable");
-  assert.equal(router.assessedMaxScore, 0);
+  assert.equal(unavailable.checks.find((check) => check.id === "fw-hostname").source, "unavailable");
+  assert.equal(unavailable.assessedMaxScore, 0);
 });
 
 test("EcoRouter serial output parser extracts hostname", () => {

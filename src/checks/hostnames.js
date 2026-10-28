@@ -29,22 +29,27 @@ function errorSummary(error) {
   return String(error.stderr || error.message || error).trim().split(/\r?\n/)[0];
 }
 
-export async function applyHostnameChecks(assessment, adapter) {
+export async function applyHostnameChecks(assessment, adapter, report = () => {}) {
   await Promise.all(hostnameRules.map(async (rule) => {
     const device = assessment.devices.find((item) => item.vmid === rule.vmid);
     if (!device) return;
     const check = ensureHostnameCheck(device, rule);
+
+    // EcoRouter is checked through its serial CLI below; QGA is not available there.
+    if (rule.vmid === 101 || rule.vmid === 102) return;
 
     if (device.state !== "running") {
       Object.assign(check, {
         status: "unknown", score: 0, source: "unavailable", duration: null,
         evidence: `VM остановлена · ожидается ${rule.expected}`
       });
+      report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: VM остановлена` });
       return;
     }
 
     const startedAt = performance.now();
     try {
+      report({ kind: "command", vmid: rule.vmid, device: device.name, command: `qm guest cmd ${rule.vmid} get-host-name`, message: `Проверяем hostname ${device.name}` });
       await adapter.guestCommand(rule.vmid, "ping");
       const response = await adapter.guestCommand(rule.vmid, "get-host-name");
       const actual = response["host-name"] || "";
@@ -63,17 +68,23 @@ export async function applyHostnameChecks(assessment, adapter) {
         evidence: `Канал QGA недоступен · ${errorSummary(error)}`
       });
     }
+    report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: ${check.status === "pass" ? "выполнено" : check.status === "fail" ? "ошибка" : "недоступно"}` });
   }));
 }
 
-export async function applyEcoRouterHostnameChecks(assessment, proxmox, serial) {
+export async function applyEcoRouterHostnameChecks(assessment, proxmox, serial, report = () => {}) {
   const routerRules = hostnameRules.filter((rule) => rule.vmid === 101 || rule.vmid === 102);
   await Promise.all(routerRules.map(async (rule) => {
     const device = assessment.devices.find((item) => item.vmid === rule.vmid);
     const check = device?.checks.find((item) => item.id === rule.checkId);
-    if (!device || !check || device.state !== "running") return;
+    if (!device || !check) return;
+    if (device.state !== "running") {
+      report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: VM остановлена` });
+      return;
+    }
     const startedAt = performance.now();
     try {
+      report({ kind: "command", vmid: rule.vmid, device: device.name, command: "show hostname", message: `Проверяем hostname ${device.name} через serial CLI` });
       const credentials = await proxmox.vmConsoleCredentials(rule.vmid);
       const actual = await serial.getHostname(rule.vmid, credentials);
       const matches = actual.localeCompare(rule.expected, undefined, { sensitivity: "accent" }) === 0;
@@ -89,6 +100,7 @@ export async function applyEcoRouterHostnameChecks(assessment, proxmox, serial) 
         evidence: `Serial CLI недоступен · ${errorSummary(error)}`
       });
     }
+    report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: ${check.status === "pass" ? "выполнено" : check.status === "fail" ? "ошибка" : "недоступно"}` });
   }));
 }
 

@@ -118,25 +118,90 @@ function showToast(message) {
   setTimeout(() => toast.classList.remove("visible"), 2800);
 }
 
+function setRunProgress(completed, total, message) {
+  const safeTotal = total || 1;
+  const percent = Math.min(100, Math.round(completed / safeTotal * 100));
+  $("#run-progress-value").textContent = `${completed} / ${total}`;
+  $("#run-progress-bar").style.width = `${percent}%`;
+  $(".progress-track").setAttribute("aria-valuemax", total);
+  $(".progress-track").setAttribute("aria-valuenow", completed);
+  if (message) $("#run-status").textContent = message;
+}
+
+function appendLog(event) {
+  if (event.type !== "command" && event.type !== "result" && event.type !== "error") return;
+  const row = document.createElement("div");
+  row.className = "log-line";
+  const time = new Date(event.at).toLocaleTimeString("ru-RU", { hour12: false });
+  const device = event.vmid ? `VM ${event.vmid}` : "NODE";
+  const content = event.type === "command" ? `$ ${event.command}` : event.message;
+  const resultClass = event.type === "result" ? `log-result ${event.check?.status || "unknown"}` : event.type === "error" ? "log-result fail" : "log-command";
+  for (const [className, value] of [["log-time", time], ["log-device", device], [resultClass, content]]) {
+    const span = document.createElement("span");
+    span.className = className;
+    span.textContent = value;
+    row.append(span);
+  }
+  const log = $("#command-log");
+  log.append(row);
+  log.scrollTop = log.scrollHeight;
+}
+
+function waitForRun(run) {
+  return new Promise((resolve, reject) => {
+    const stream = new EventSource(`/api/runs/${run.id}/events`);
+    let finished = false;
+    stream.onmessage = ({ data }) => {
+      const event = JSON.parse(data);
+      appendLog(event);
+      setRunProgress(event.completed, event.total, event.message);
+      if (event.type === "complete") {
+        finished = true;
+        stream.close();
+        resolve(event.assessment);
+      } else if (event.type === "error") {
+        finished = true;
+        stream.close();
+        reject(new Error(event.message));
+      }
+    };
+    stream.onerror = () => {
+      stream.close();
+      if (!finished) reject(new Error("Поток проверки был прерван"));
+    };
+  });
+}
+
 async function runAssessment() {
   if (state.running) return;
   state.running = true;
   const button = $("#run-button");
   button.disabled = true;
-  button.innerHTML = "Проверяем устройства…";
+  button.innerHTML = "Проверка выполняется…";
   document.querySelector(".workspace").classList.add("running-shimmer");
+  const monitor = $("#run-monitor");
+  monitor.hidden = false;
+  monitor.className = "run-monitor";
+  $("#command-log").innerHTML = "";
+  setRunProgress(0, 19, "Подготовка проверки…");
+  monitor.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
   try {
-    const started = await fetch("/api/runs", { method: "POST" }).then((response) => response.json());
-    await new Promise((resolve) => setTimeout(resolve, 1400));
-    const result = await fetch(`/api/runs/${started.id}`).then((response) => response.json());
-    result.assessment.lab.checkedAt = new Date().toISOString();
-    state.assessment = result.assessment;
+    const started = await fetch("/api/runs", { method: "POST" }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    });
+    setRunProgress(0, started.total, "Проверяем инфраструктуру…");
+    state.assessment = await waitForRun(started);
     renderSummary();
     renderDevices();
     renderDetail();
+    monitor.classList.add("completed");
+    setRunProgress(started.total, started.total, "Проверка завершена");
     showToast("Проверка завершена · результаты обновлены");
   } catch (error) {
+    monitor.classList.add("failed");
+    $("#run-status").textContent = "Проверка прервана";
     showToast(`Не удалось запустить проверку: ${error.message}`);
   } finally {
     state.running = false;
@@ -162,4 +227,5 @@ async function init() {
 }
 
 $("#run-button").addEventListener("click", runAssessment);
+$("#clear-log").addEventListener("click", () => { $("#command-log").innerHTML = ""; });
 init();
