@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { snapshot } from "../src/data/assessment.js";
 import { ProxmoxSshAdapter } from "../src/adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-server.js";
+import { applyHostnameChecks, recalculateDeviceScores } from "../src/checks/hostnames.js";
 
 test("assessment scores are internally consistent", () => {
   const data = snapshot();
@@ -53,4 +54,26 @@ test("HQ-SRV live checks calculate partial score from guest data", async () => {
   assert.equal(device.checkMode, "live");
   assert.equal(device.score, 7);
   assert.equal(device.assessedMaxScore, 10);
+});
+
+test("hostname checks compare case-insensitively and preserve unavailable state", async () => {
+  const data = snapshot();
+  data.devices.forEach((device) => {
+    device.state = "running";
+    device.checks.forEach((check) => Object.assign(check, { status: "unknown", score: 0, source: "pending" }));
+  });
+  const fakeAdapter = {
+    async guestCommand(vmid, command) {
+      if (vmid !== 100) throw new Error("QEMU guest agent is not running");
+      return command === "ping" ? { ok: true } : { "host-name": "isp" };
+    }
+  };
+  await applyHostnameChecks(data, fakeAdapter);
+  recalculateDeviceScores(data);
+  const isp = data.devices.find((device) => device.vmid === 100);
+  const router = data.devices.find((device) => device.vmid === 101);
+  assert.equal(isp.checks.find((check) => check.id === "isp-hostname").status, "pass");
+  assert.equal(isp.assessedMaxScore, 1);
+  assert.equal(router.checks.find((check) => check.id === "hq-hostname").source, "unavailable");
+  assert.equal(router.assessedMaxScore, 0);
 });

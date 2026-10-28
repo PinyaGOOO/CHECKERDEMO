@@ -1,5 +1,6 @@
 import { ProxmoxSshAdapter } from "../adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../checks/hq-server.js";
+import { applyHostnameChecks, recalculateDeviceScores } from "../checks/hostnames.js";
 
 const adapter = new ProxmoxSshAdapter({
   alias: process.env.CHECKER_SSH_ALIAS || "checker",
@@ -48,6 +49,8 @@ export async function applyLiveInfrastructure(assessment) {
     if (hqServer?.state === "running") {
       applyCheckResults(hqServer, await collectHqServerChecks(adapter));
     }
+    await applyHostnameChecks(assessment, adapter);
+    recalculateDeviceScores(assessment);
   } catch (error) {
     assessment.lab.mode = "mock";
     assessment.lab.connection = {
