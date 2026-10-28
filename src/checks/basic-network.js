@@ -84,14 +84,14 @@ export async function applyLinuxNetworkChecks(assessment, adapter, report = () =
         ? addresses.map((entry) => `${entry.name}:${entry.address}/${entry.prefix}`).join(", ")
         : "не найден";
       setResult(addressCheck, addressPassed, `ожидается=${addressCheck.expected} · получено=${rendered}`, Math.max(1, Math.round(performance.now() - startedAt)));
-      report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...addressCheck }, message: `${addressCheck.title}: ${addressCheck.status === "pass" ? "выполнено" : "ошибка"}` });
+      report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...addressCheck }, message: `${addressCheck.title}: ${addressCheck.status === "pass" ? "выполнено" : "ошибка"} · ${addressCheck.evidence}` });
 
       if (gatewayCheck) {
         report({ kind: "command", vmid: rule.vmid, device: device.name, command: `/usr/sbin/ip -4 route show default`, message: `Проверяем шлюз ${device.name}` });
         const route = await adapter.guestExec(rule.vmid, "/usr/sbin/ip", ["-4", "route", "show", "default"]);
         const actualGateway = routeGateway(route);
         setResult(gatewayCheck, actualGateway === rule.gateway, `ожидается=${rule.gateway} · получено=${actualGateway || "не найден"}`, Math.max(1, Math.round(performance.now() - startedAt)));
-        report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...gatewayCheck }, message: `${gatewayCheck.title}: ${gatewayCheck.status === "pass" ? "выполнено" : "ошибка"}` });
+        report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...gatewayCheck }, message: `${gatewayCheck.title}: ${gatewayCheck.status === "pass" ? "выполнено" : "ошибка"} · ${gatewayCheck.evidence}` });
       }
     } catch (error) {
       for (const check of [addressCheck, gatewayCheck].filter(Boolean)) {
@@ -136,7 +136,7 @@ export async function applyEcoRouterNetworkChecks(assessment, proxmox, serial, r
         const expected = rules[index].cidr;
         const passed = output.includes(expected);
         setResult(checks[index], passed, `ожидается=${expected} · ${passed ? "адрес найден" : "адрес не найден"}`, Math.max(1, Math.round(performance.now() - startedAt)));
-        report({ kind: "result", vmid, device: device.name, check: { ...checks[index] }, message: `${checks[index].title}: ${passed ? "выполнено" : "ошибка"}` });
+        report({ kind: "result", vmid, device: device.name, check: { ...checks[index] }, message: `${checks[index].title}: ${passed ? "выполнено" : "ошибка"} · ${checks[index].evidence}` });
       }
     } catch (error) {
       checks.forEach((check) => Object.assign(check, {

@@ -68,7 +68,7 @@ export async function applyHostnameChecks(assessment, adapter, report = () => {}
         evidence: `Канал QGA недоступен · ${errorSummary(error)}`
       });
     }
-    report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: ${check.status === "pass" ? "выполнено" : check.status === "fail" ? "ошибка" : "недоступно"}` });
+    report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: ${check.status === "pass" ? "выполнено" : check.status === "fail" ? "ошибка" : "недоступно"} · ${check.evidence}` });
   }));
 }
 
@@ -100,7 +100,7 @@ export async function applyEcoRouterHostnameChecks(assessment, proxmox, serial, 
         evidence: `Serial CLI недоступен · ${errorSummary(error)}`
       });
     }
-    report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: ${check.status === "pass" ? "выполнено" : check.status === "fail" ? "ошибка" : "недоступно"}` });
+    report({ kind: "result", vmid: rule.vmid, device: device.name, check: { ...check }, message: `${check.title}: ${check.status === "pass" ? "выполнено" : check.status === "fail" ? "ошибка" : "недоступно"} · ${check.evidence}` });
   }));
 }
 
