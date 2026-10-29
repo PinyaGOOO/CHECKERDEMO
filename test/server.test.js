@@ -7,6 +7,7 @@ import { applyHostnameChecks, parseEcoRouterDomain, recalculateDeviceScores } fr
 import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
 import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
 import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
+import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../src/checks/ecorouter-routing.js";
 import { parseTcpdumpLine } from "../src/services/traffic-capture.js";
 
 test("assessment scores are internally consistent", () => {
@@ -191,6 +192,39 @@ port te1
   assert.equal(te0BindingValid(config, "uplink"), true);
   assert.equal(te0BindingValid(config.replace("encapsulation untagged", "encapsulation dot1q 100"), "uplink"), false);
   assert.equal(te0BindingValid(config, "wrong-interface"), false);
+});
+
+test("EcoRouter routing parsers recognize VLAN trunk, GRE and protected OSPF", () => {
+  const config = `
+router ospf 1
+ passive-interface default
+ no passive-interface tunnel.7
+!
+port te1
+ service-instance servers
+  encapsulation dot1q 100
+ service-instance clients
+  encapsulation dot1q 200
+ service-instance management
+  encapsulation dot1q 999
+!
+interface tunnel.7
+ ip address 10.10.10.0/31
+ ip tunnel 172.20.0.2 172.20.1.2 mode gre
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 md5 encrypted-value
+!`;
+  assert.deepEqual(parseVlanTrunks(config)[0].services.map((entry) => entry.vlan), [100, 200, 999]);
+  assert.deepEqual(parseVmNics("net0: virtio=AA:BB,bridge=HQ_NET,tag=100\nnet1: virtio=CC:DD,bridge=ISP_HQ\n"), [
+    { bridge: "HQ_NET", tag: 100 }, { bridge: "ISP_HQ", tag: null }
+  ]);
+  const tunnel = parseTunnel(config, "tunnel.7 10.10.10.0/31 up default");
+  assert.equal(tunnel.mode, "gre");
+  assert.equal(tunnel.status, "up");
+  assert.equal(tunnel.auth && tunnel.authKey, true);
+  const ospf = parseOspfState(config, "Total number of full neighbors: 1\n1.1.1.1 1 Full/DR 00:00:30 10.10.10.1 tunnel.7", "O 192.168.1.0/24 [110/2] via 10.10.10.1", "tunnel.7");
+  assert.equal(ospf.passiveDefault && ospf.onlyTunnelActive && ospf.neighborOnTunnel, true);
+  assert.deepEqual(ospf.routeNetworks, ["192.168.1.0/24"]);
 });
 
 test("tcpdump parser extracts real packet metadata and resolves VM MAC addresses", () => {
