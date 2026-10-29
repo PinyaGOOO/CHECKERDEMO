@@ -11,7 +11,7 @@ export const hostnameRules = [
 ];
 
 export function parseEcoRouterDomain(config) {
-  return config.match(/^\s*ip\s+domain\s+name\s+(\S+)\s*$/im)?.[1] || null;
+  return config.match(/^\s*ip\s+domain(?:-|\s+)name\s+(\S+)\s*$/im)?.[1] || null;
 }
 
 function ensureHostnameCheck(device, rule) {

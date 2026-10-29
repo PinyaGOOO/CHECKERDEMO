@@ -89,6 +89,7 @@ test("EcoRouter serial output parser extracts hostname", () => {
 
 test("EcoRouter domain parser reads ip domain name independently from hostname", () => {
   assert.equal(parseEcoRouterDomain("hostname hq-rtr\nip domain name au-team.irpo\n"), "au-team.irpo");
+  assert.equal(parseEcoRouterDomain("hostname hq-rtr\nip domain-name au-team.irpo\n"), "au-team.irpo");
   assert.equal(parseEcoRouterDomain("hostname hq-rtr\n"), null);
 });
 
