@@ -114,10 +114,14 @@ function findRouterEndpoint(rule, observations) {
     && candidate.prefix === rule.prefix
     && isPrivateIpv4(candidate.address)
   ) || [];
-  return router?.addresses?.find((candidate) =>
+  const routerCandidates = router?.addresses?.filter((candidate) =>
+    candidate.prefix === rule.prefix && isPrivateIpv4(candidate.address)
+  ) || [];
+  const matched = routerCandidates.find((candidate) =>
     candidate.prefix === rule.prefix
     && peers.some((peer) => candidate.address !== peer.address && sameSubnet(candidate.address, peer.address, rule.prefix))
-  ) || null;
+  );
+  return matched || (routerCandidates.length === 1 ? routerCandidates[0] : null);
 }
 
 function endpointValid(endpoint, prefix) {
@@ -219,7 +223,7 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
     });
     const endpoint = routerEndpoints.get(rule.key);
     let status = "fail";
-    const interfaceLabel = endpoint?.name || rule.interface || "WAN";
+    const interfaceLabel = endpoint?.name || rule.interface || "сегмент";
     let evidence = `${interfaceLabel}: ${endpoint ? `${endpoint.address}/${endpoint.prefix}` : "адрес не найден"}`;
     if (observation.addressError) {
       status = "unknown";
