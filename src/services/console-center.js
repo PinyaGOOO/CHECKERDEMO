@@ -65,7 +65,7 @@ class ConsoleCenter {
     owner.devices.set(vmid, device);
     socket.on("connect", () => {
       this.publish(token, { type: "status", vmid, status: "connected", channel: "serial0" });
-      socket.write("\r\n");
+      socket.write("\x03\r\n");
     });
     socket.on("data", (chunk) => {
       const output = chunk.toString("utf8");
