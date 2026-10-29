@@ -8,7 +8,7 @@ import { snapshot } from "./data/assessment.js";
 import { applyLiveInfrastructure, getInfrastructure, resetInfrastructureCache } from "./services/infrastructure.js";
 import { trafficCapture } from "./services/traffic-capture.js";
 import { consoleCenter } from "./services/console-center.js";
-import { createSession, deleteSession, expiredSessionCookie, loginAllowed, sessionCookie, sessionFromRequest, verifyRootPassword } from "./services/console-auth.js";
+import { createSession, sessionCookie, sessionFromRequest } from "./services/console-auth.js";
 
 const root = fileURLToPath(new URL("../public/", import.meta.url));
 const vendorFiles = new Map([
@@ -142,29 +142,16 @@ async function handleRequest(request, response) {
   if (url.pathname.startsWith("/api/console/")) {
     if (!secure) return json(response, 426, { error: "HTTPS required" });
 
-    if (request.method === "POST" && url.pathname === "/api/console/login") {
-      if (!loginAllowed(request)) return json(response, 429, { error: "Слишком много попыток. Повторите через 5 минут." });
-      try {
-        const { password } = await readJson(request, 1_024);
-        if (!await verifyRootPassword(password)) return json(response, 401, { error: "Неверный пароль root" });
-        const token = createSession(request);
-        return json(response, 200, { ok: true }, { "Set-Cookie": sessionCookie(token) });
-      } catch (error) {
-        return json(response, 400, { error: error.message });
-      }
+    if (request.method === "GET" && url.pathname === "/api/console/session") {
+      const existing = sessionFromRequest(request);
+      if (existing) return json(response, 200, { ok: true, user: "root", expiresAt: existing.expiresAt });
+      const token = createSession(request);
+      return json(response, 200, { ok: true, user: "root" }, { "Set-Cookie": sessionCookie(token) });
     }
 
     const session = sessionFromRequest(request);
     if (!session) return json(response, 401, { error: "Требуется вход" });
 
-    if (request.method === "GET" && url.pathname === "/api/console/session") {
-      return json(response, 200, { ok: true, user: "root", expiresAt: session.expiresAt });
-    }
-    if (request.method === "POST" && url.pathname === "/api/console/logout") {
-      consoleCenter.closeOwner(session.token);
-      deleteSession(session.token);
-      return json(response, 200, { ok: true }, { "Set-Cookie": expiredSessionCookie });
-    }
     if (request.method === "GET" && url.pathname === "/api/console/events") {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" });
       response.write(": connected\n\n");
@@ -186,7 +173,7 @@ async function handleRequest(request, response) {
           const { cols, rows } = await readJson(request);
           consoleCenter.resize(session.token, vmid, cols, rows);
         }
-        if (match[2] === "disconnect") consoleCenter.disconnect(session.token, vmid);
+        if (match[2] === "disconnect") await consoleCenter.disconnect(session.token, vmid);
         return json(response, 200, { ok: true });
       } catch (error) {
         return json(response, 400, { error: error.message });

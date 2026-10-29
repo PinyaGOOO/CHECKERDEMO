@@ -7,7 +7,7 @@ const devices = [
   { vmid:104, name:"HQ-SRV", channel:"serial0" }, { vmid:105, name:"BR-SRV", channel:"serial0" },
   { vmid:106, name:"HQ-CLI", channel:"serial0" }
 ];
-const state = { stream:null, connected:new Set(), terminals:new Map(), dimensions:new Map(), qgaBuffers:new Map(), rawQueues:new Map() };
+const state = { stream:null, autoStarted:false, connected:new Set(), terminals:new Map(), dimensions:new Map(), qgaBuffers:new Map(), rawQueues:new Map() };
 const grid = document.querySelector("#console-grid");
 document.querySelector("#dashboard-link").href = `http://${location.hostname}:8007/`;
 
@@ -31,7 +31,7 @@ function createTerminal(device, host) {
   terminal.loadAddon(fit);
   terminal.open(host);
   fitWithCursorGutter(device.vmid, terminal, fit);
-  terminal.writeln("Нажмите «Подключить», чтобы открыть консоль.");
+  terminal.writeln("Подготавливается root-консоль…");
   terminal.onData((data) => device.qga ? handleQgaInput(device.vmid, data) : queueRawInput(device.vmid, data));
   let resizeFrame = null;
   new ResizeObserver(() => {
@@ -93,13 +93,13 @@ function handleQgaInput(vmid, data) {
       const command = buffer;
       buffer = "";
       writeAndFollow(terminal, "\r\n");
-      if (command.trim()) api(`/api/console/${vmid}/input`, { command }).catch((error) => writeAndFollow(terminal, `\x1b[31m${error.message}\x1b[0m\r\n$ `));
-      else writeAndFollow(terminal, "$ ");
+      if (command.trim()) api(`/api/console/${vmid}/input`, { command }).catch((error) => writeAndFollow(terminal, `\x1b[31m${error.message}\x1b[0m\r\n# `));
+      else writeAndFollow(terminal, "# ");
     } else if (character === "\u007f") {
       if (buffer.length) { buffer = buffer.slice(0, -1); terminal.write("\b \b"); }
     } else if (character === "\u0003") {
       buffer = "";
-      writeAndFollow(terminal, "^C\r\n$ ");
+      writeAndFollow(terminal, "^C\r\n# ");
     } else if (character >= " " && character !== "\u007f") {
       buffer += character;
       terminal.write(character);
@@ -132,6 +132,12 @@ function openEventStream() {
   state.stream?.close();
   const stream = new EventSource("/api/console/events");
   state.stream = stream;
+  stream.onopen = () => {
+    document.querySelector("#secure-user").textContent = "root-консоли · HTTPS";
+    if (state.autoStarted) return;
+    state.autoStarted = true;
+    Promise.all(devices.map((device) => connect(device.vmid))).catch(() => {});
+  };
   stream.onmessage = ({ data }) => {
     const event = JSON.parse(data);
     if (event.type === "output") appendOutput(event.vmid, event.data);
@@ -152,24 +158,14 @@ async function disconnect(vmid) {
 }
 
 function unlock() {
-  document.querySelector("#login-layer").classList.add("hidden");
-  document.querySelector("#secure-user").textContent = "root · HTTPS";
-  document.querySelector("#logout-button").hidden = false;
+  document.querySelector("#secure-user").textContent = "Подключение root-консолей…";
   openEventStream();
 }
 
-document.querySelector("#login-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const input = document.querySelector("#root-password");
-  const error = document.querySelector("#login-error");
-  error.textContent = "Проверяем пароль…";
-  try { await api("/api/console/login", { password:input.value }); input.value = ""; error.textContent = ""; unlock(); }
-  catch (loginError) { input.value = ""; error.textContent = loginError.message; input.focus(); }
-});
-
-document.querySelector("#connect-all").addEventListener("click", async () => { for (const device of devices) if (!state.connected.has(device.vmid)) await connect(device.vmid); });
+document.querySelector("#connect-all").addEventListener("click", async () => { await Promise.all(devices.filter((device) => !state.connected.has(device.vmid)).map((device) => connect(device.vmid))); });
 document.querySelector("#disconnect-all").addEventListener("click", async () => { await Promise.all(devices.filter((device) => state.connected.has(device.vmid)).map((device) => disconnect(device.vmid))); });
-document.querySelector("#logout-button").addEventListener("click", async () => { await api("/api/console/logout"); state.stream?.close(); location.reload(); });
 
 renderCards();
-fetch("/api/console/session").then((response) => response.ok ? response.json() : Promise.reject()).then(unlock).catch(() => {});
+fetch("/api/console/session").then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))).then(unlock).catch((error) => {
+  document.querySelector("#secure-user").textContent = `Ошибка: ${error.message}`;
+});

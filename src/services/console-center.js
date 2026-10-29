@@ -7,6 +7,7 @@ const allowedVmids = new Set([100, 101, 102, 103, 104, 105, 106]);
 const qgaVmids = new Set([103]);
 const linuxSerialVmids = new Set([100, 104, 105, 106]);
 const adapter = new ProxmoxSshAdapter({ transport: "local", timeout: 12_000 });
+const rootConsoleUnit = "web-demo-checker-console.service";
 
 class ConsoleCenter {
   constructor() {
@@ -51,13 +52,14 @@ class ConsoleCenter {
     if (qgaVmids.has(vmid)) {
       owner.devices.set(vmid, { type: "qga" });
       this.publish(token, { type: "status", vmid, status: "connected", channel: "QGA shell" });
-      this.publish(token, { type: "output", vmid, data: "QGA command shell готов. Команды выполняются по Enter.\r\n$ " });
+      this.publish(token, { type: "output", vmid, data: "Root QGA shell готов. Команды выполняются по Enter.\r\n# " });
       return;
     }
 
-    let credentials;
+    let credentials = null;
     try {
-      credentials = await adapter.vmConsoleCredentials(vmid);
+      if (linuxSerialVmids.has(vmid)) await this.startRootConsole(vmid);
+      else credentials = await adapter.vmConsoleCredentials(vmid);
     } catch (error) {
       this.locks.delete(vmid);
       throw error;
@@ -72,7 +74,7 @@ class ConsoleCenter {
       sentPassword: false,
       resetting: true,
       sttyApplied: false,
-      rootEscalation: linuxSerialVmids.has(vmid) ? "pending" : "none"
+      rootConsole: linuxSerialVmids.has(vmid)
     };
     owner.devices.set(vmid, device);
     socket.on("connect", () => {
@@ -91,21 +93,21 @@ class ConsoleCenter {
         device.resetting = false;
         socket.write("q");
         setTimeout(() => socket.write("\x03\r\n"), 120);
-      } else if (!device.sentUser && /login:\s*$/i.test(device.buffer)) {
+      } else if (credentials && !device.sentUser && /login:\s*$/i.test(device.buffer)) {
         device.sentUser = true;
         socket.write(`${credentials.username}\r\n`);
-      } else if (!device.sentPassword && /Password:\s*$/i.test(device.buffer)) {
+      } else if (credentials && !device.sentPassword && /Password:\s*$/i.test(device.buffer)) {
         device.sentPassword = true;
         socket.write(`${credentials.password}\r\n`);
       }
       if (/[#>]\s*$/.test(device.buffer)) device.resetting = false;
       this.applyTerminalSize(owner, vmid, device);
-      this.escalateLinuxRoot(device);
     });
     socket.on("error", (error) => {
       this.publish(token, { type: "status", vmid, status: "error", message: error.message });
       owner.devices.delete(vmid);
       this.locks.delete(vmid);
+      if (device.rootConsole) this.stopRootConsole(vmid).catch(() => {});
     });
     socket.on("close", () => {
       this.publish(token, { type: "status", vmid, status: "disconnected" });
@@ -114,24 +116,22 @@ class ConsoleCenter {
     });
   }
 
-  escalateLinuxRoot(device) {
-    if (device.rootEscalation === "none" || device.rootEscalation === "root" || device.rootEscalation === "failed") return;
-    if (device.rootEscalation === "pending" && /#\s*$/.test(device.buffer)) {
-      device.rootEscalation = "root";
-      return;
-    }
-    if (device.rootEscalation === "pending" && /\$\s*$/.test(device.buffer)) {
-      device.rootEscalation = "verifying";
-      device.buffer = "";
-      device.socket.write("sudo -i\r\n");
-      return;
-    }
-    if (device.rootEscalation === "verifying" && /#\s*$/.test(device.buffer)) {
-      device.rootEscalation = "root";
-    } else if (device.rootEscalation === "verifying" && /\$\s*$/.test(device.buffer)) {
-      device.rootEscalation = "failed";
-      device.socket.write("printf '\\r\\n[checker] Не удалось перейти в root\\r\\n'\r\n");
-    }
+  async startRootConsole(vmid) {
+    const cleanup = `systemctl kill -s KILL ${rootConsoleUnit} 2>/dev/null || true; systemctl stop --no-block ${rootConsoleUnit} 2>/dev/null || true; for i in 1 2 3 4 5 6 7 8 9 10; do systemctl is-active --quiet ${rootConsoleUnit} || break; sleep 0.1; done; systemctl reset-failed ${rootConsoleUnit} 2>/dev/null || true`;
+    const launch = [
+      `systemd-run --unit=${rootConsoleUnit.replace(/\.service$/, "")} --collect`,
+      "--property=StandardInput=tty --property=StandardOutput=tty --property=StandardError=tty",
+      "--property=TTYPath=/dev/ttyS0 --property=TTYReset=yes --property=TTYVHangup=yes",
+      "--property=TTYVTDisallocate=no --property=KillMode=mixed --property=TimeoutStopSec=1s",
+      "--setenv=TERM=xterm-256color /bin/bash -il"
+    ].join(" ");
+    const result = await adapter.guestExec(vmid, "/bin/sh", ["-lc", `${cleanup}; systemctl stop serial-getty@ttyS0.service; ${launch}`]);
+    if (result.exitcode !== 0) throw new Error(result["err-data"] || `Root console failed with exit ${result.exitcode}`);
+  }
+
+  async stopRootConsole(vmid) {
+    const command = `systemctl kill -s KILL ${rootConsoleUnit} 2>/dev/null || true; systemctl stop --no-block ${rootConsoleUnit} 2>/dev/null || true; for i in 1 2 3 4 5 6 7 8 9 10; do systemctl is-active --quiet ${rootConsoleUnit} || break; sleep 0.1; done; systemctl reset-failed ${rootConsoleUnit} 2>/dev/null || true; systemctl start serial-getty@ttyS0.service`;
+    await adapter.guestExec(vmid, "/bin/sh", ["-lc", command]);
   }
 
   applyTerminalSize(owner, vmid, device) {
@@ -164,19 +164,20 @@ class ConsoleCenter {
     try {
       const result = await adapter.guestExec(vmid, "/bin/sh", ["-lc", value]);
       const output = `${result["out-data"] || ""}${result["err-data"] || ""}`;
-      this.publish(token, { type: "output", vmid, data: `${output || `[exit ${result.exitcode ?? 0}]\n`}\r\n$ ` });
+      this.publish(token, { type: "output", vmid, data: `${output || `[exit ${result.exitcode ?? 0}]\n`}\r\n# ` });
     } catch (error) {
-      this.publish(token, { type: "output", vmid, data: `Ошибка QGA: ${error.message}\r\n$ ` });
+      this.publish(token, { type: "output", vmid, data: `Ошибка QGA: ${error.message}\r\n# ` });
     }
   }
 
-  disconnect(token, vmid) {
+  async disconnect(token, vmid) {
     const owner = this.owners.get(token);
     const device = owner?.devices.get(vmid);
     if (!device) return;
     owner.devices.delete(vmid);
     this.locks.delete(vmid);
     if (device.type === "serial") device.socket.end();
+    if (device.rootConsole) await this.stopRootConsole(vmid).catch(() => {});
     this.publish(token, { type: "status", vmid, status: "disconnected" });
   }
 
@@ -186,6 +187,7 @@ class ConsoleCenter {
     clearTimeout(owner.closeTimer);
     for (const [vmid, device] of owner.devices) {
       if (device.type === "serial") device.socket.end();
+      if (device.rootConsole) this.stopRootConsole(vmid).catch(() => {});
       owner.devices.delete(vmid);
       this.locks.delete(vmid);
     }

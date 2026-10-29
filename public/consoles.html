@@ -15,7 +15,7 @@
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <span><strong>Web Demo Checker</strong><small>Console center</small></span>
       </a>
-      <div class="topbar-actions"><span id="secure-user">Не авторизован</span><button id="logout-button" type="button" hidden>Выйти</button></div>
+      <div class="topbar-actions"><span id="secure-user">root-консоли · HTTPS</span></div>
     </header>
 
     <main>
@@ -27,18 +27,6 @@
       <section id="console-grid" class="console-grid" aria-label="Консоли виртуальных машин"></section>
     </main>
 
-    <div id="login-layer" class="login-layer">
-      <form id="login-form" class="login-card">
-        <div class="login-icon" aria-hidden="true">⌘</div>
-        <span class="eyebrow">ЗАЩИЩЁННЫЙ РАЗДЕЛ</span>
-        <h2>Вход в центр управления</h2>
-        <p>Введите пароль пользователя <code>root</code> от Proxmox-ноды. Пароль проверяется через PAM и не сохраняется.</p>
-        <label for="root-password">Пароль root</label>
-        <input id="root-password" name="password" type="password" autocomplete="current-password" required autofocus />
-        <button class="primary-button" type="submit">Войти</button>
-        <span id="login-error" class="login-error" role="alert"></span>
-      </form>
-    </div>
     <script type="module" src="/consoles.js"></script>
   </body>
 </html>
