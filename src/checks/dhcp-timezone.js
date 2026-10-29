@@ -252,7 +252,7 @@ export async function applyDhcpAndTimezoneChecks(assessment, adapter, serial, re
   else {
     const valid = Boolean(serverCheck.status === "pass" && dhcpData.clientValid);
     setResult(clientCheck, valid ? "pass" : "fail",
-      `method=${dhcpData.client.method || "не найден"} · адрес=${dhcpData.client.address ? `${dhcpData.client.address}/${dhcpData.client.prefix}` : "нет"} · gateway=${dhcpData.client.gateway || "нет"} · DNS=${dhcpData.client.dns.join(",") || "нет"} · domain=${dhcpData.client.domains.join(",") || "нет"} · сервер HQ-RTR=${serverCheck.status === "pass" ? "подтверждён" : "не подтверждён"}`, duration());
+      `method=${dhcpData.client.method || "не найден"} · адрес=${dhcpData.client.address ? `${dhcpData.client.address}/${dhcpData.client.prefix}` : "нет"} · gateway=${dhcpData.client.gateway || "нет"} · DNS=${dhcpData.client.dns.join(",") || "нет"} · сервер HQ-RTR=${serverCheck.status === "pass" ? "подтверждён" : "не подтверждён"}`, duration());
   }
   reportResult(report, cliDevice, clientCheck);
 
