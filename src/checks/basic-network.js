@@ -1,16 +1,14 @@
 const segmentRules = [
   { key: "hq-wan", vmid: 101, id: "hq-wan-ipv4", title: "WAN ↔ ISP", prefix: 28, peerVmid: 100, peerInterface: "ens20" },
-  { key: "hq-vlan100", vmid: 101, id: "hq-vlan100-ipv4", title: "VLAN 100 · HQ-SRV", interface: "vl100", prefix: 27, peerVmid: 104 },
-  { key: "hq-vlan200", vmid: 101, id: "hq-vlan200-ipv4", title: "VLAN 200 · HQ-CLI", interface: "vl200", prefix: 24, peerVmid: 106 },
-  { key: "hq-vlan999", vmid: 101, id: "hq-vlan999-ipv4", title: "VLAN 999 · управление", interface: "vl999", prefix: 29 },
-  { key: "br-wan", vmid: 102, id: "br-wan-ipv4", title: "WAN ↔ ISP", prefix: 28, peerVmid: 100, peerInterface: "ens21" },
-  { key: "br-lan", vmid: 102, id: "br-lan-ipv4", title: "LAN ↔ BR-SRV", interface: "int1", prefix: 28, peerVmid: 105 }
+  { key: "hq-vlan100", vmid: 101, id: "hq-vlan100-ipv4", title: "VLAN 100 · HQ-SRV", prefix: 27, peerVmid: 104 },
+  { key: "hq-vlan200", vmid: 101, id: "hq-vlan200-ipv4", title: "VLAN 200 · HQ-CLI", prefix: 24, peerVmid: 106 },
+  { key: "hq-vlan999", vmid: 101, id: "hq-vlan999-ipv4", title: "VLAN 999 · управление", prefix: 29 },
+  { key: "br-wan", vmid: 102, id: "br-wan-ipv4", title: "WAN ↔ ISP", prefix: 28, peerVmid: 100, peerInterface: "ens21" }
 ];
 
 const linuxRules = [
-  { vmid: 104, routerVmid: 101, routerInterface: "vl100", prefix: 27 },
-  { vmid: 105, routerVmid: 102, routerInterface: "int1", prefix: 28 },
-  { vmid: 106, routerVmid: 101, routerInterface: "vl200", prefix: 24 }
+  { vmid: 104, routerVmid: 101, segmentKey: "hq-vlan100", prefix: 27 },
+  { vmid: 106, routerVmid: 101, segmentKey: "hq-vlan200", prefix: 24 }
 ];
 
 function errorSummary(error) {
@@ -108,12 +106,17 @@ function findInterface(observation, name) {
 function findRouterEndpoint(rule, observations) {
   const router = observations.get(rule.vmid);
   if (rule.interface) return findInterface(router, rule.interface);
-  const peer = findInterface(observations.get(rule.peerVmid), rule.peerInterface);
-  if (!peer || peer.prefix !== rule.prefix) return null;
+  if (!rule.peerVmid) {
+    return router?.addresses?.find((candidate) => candidate.prefix === rule.prefix && isPrivateIpv4(candidate.address)) || null;
+  }
+  const peers = observations.get(rule.peerVmid)?.addresses?.filter((candidate) =>
+    (!rule.peerInterface || candidate.name.toLowerCase() === rule.peerInterface.toLowerCase())
+    && candidate.prefix === rule.prefix
+    && isPrivateIpv4(candidate.address)
+  ) || [];
   return router?.addresses?.find((candidate) =>
     candidate.prefix === rule.prefix
-    && candidate.address !== peer.address
-    && sameSubnet(candidate.address, peer.address, rule.prefix)
+    && peers.some((peer) => candidate.address !== peer.address && sameSubnet(candidate.address, peer.address, rule.prefix))
   ) || null;
 }
 
@@ -184,7 +187,7 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
   const observations = new Map();
   const startedAt = performance.now();
 
-  await Promise.all([100, 104, 105, 106].map(async (vmid) => {
+  await Promise.all([100, 104, 106].map(async (vmid) => {
     observations.set(vmid, await collectLinux(byVmid.get(vmid), adapter, report, vmid !== 100));
   }));
   await Promise.all([101, 102].map(async (vmid) => {
@@ -259,7 +262,7 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
     const device = byVmid.get(rule.vmid);
     const observation = observations.get(rule.vmid);
     const routerObservation = observations.get(rule.routerVmid);
-    const routerEndpoint = findInterface(routerObservation, rule.routerInterface);
+    const routerEndpoint = routerEndpoints.get(rule.segmentKey);
     const addressCheck = upsertCheck(device, `${device.id}-ipv4`, {
       title: "IPv4 и связь с маршрутизатором",
       method: "QEMU Guest Agent + проверка топологии",
@@ -272,7 +275,7 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
       addressStatus = "unknown";
       addressEvidence = `Данные недоступны · ${observation.addressError || routerObservation.addressError}`;
     } else if (!endpointValid(routerEndpoint, rule.prefix)) {
-      addressEvidence += ` · на ${byVmid.get(rule.routerVmid).name}:${rule.routerInterface} нет корректного /${rule.prefix}`;
+      addressEvidence += ` · на ${byVmid.get(rule.routerVmid).name} нет корректного /${rule.prefix} в общей подсети`;
     } else {
       endpoint = observation.addresses.find((candidate) =>
         candidate.prefix === rule.prefix
@@ -285,7 +288,7 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
         addressStatus = "pass";
         addressEvidence = `${device.name}:${endpoint.address}/${endpoint.prefix} ↔ ${byVmid.get(rule.routerVmid).name}:${routerEndpoint.address}/${routerEndpoint.prefix}`;
       } else {
-        addressEvidence += ` · нет адреса в подсети ${rule.routerInterface} маршрутизатора`;
+        addressEvidence += " · нет адреса в общей подсети с маршрутизатором";
       }
     }
     setResult(addressCheck, addressStatus, addressEvidence, Math.max(1, Math.round(performance.now() - startedAt)));
@@ -303,7 +306,7 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
       gatewayEvidence = `Данные недоступны · ${observation.gatewayError || routerObservation.addressError}`;
     } else if (routerEndpoint && observation.gateway === routerEndpoint.address && endpoint && sameSubnet(observation.gateway, endpoint.address, rule.prefix)) {
       gatewayStatus = "pass";
-      gatewayEvidence = `шлюз=${observation.gateway} · совпадает с ${byVmid.get(rule.routerVmid).name}:${rule.routerInterface}`;
+      gatewayEvidence = `шлюз=${observation.gateway} · совпадает с ${byVmid.get(rule.routerVmid).name}:${routerEndpoint.name}`;
     } else {
       gatewayEvidence += ` · адрес маршрутизатора=${routerEndpoint?.address || "не найден"}`;
     }

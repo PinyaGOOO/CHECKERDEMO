@@ -2,13 +2,17 @@ const domain = "au-team.irpo";
 
 export const hostnameRules = [
   { vmid: 100, checkId: "isp-hostname", expected: "ISP" },
-  { vmid: 101, checkId: "hq-hostname", expected: `HQ-RTR.${domain}` },
-  { vmid: 102, checkId: "br-hostname", expected: `BR-RTR.${domain}` },
+  { vmid: 101, checkId: "hq-hostname", expected: "HQ-RTR", expectedDomain: domain },
+  { vmid: 102, checkId: "br-hostname", expected: "BR-RTR", expectedDomain: domain },
   { vmid: 103, checkId: "fw-hostname", expected: `BR-FW.${domain}` },
   { vmid: 104, checkId: "hqsrv-hostname", expected: `HQ-SRV.${domain}` },
   { vmid: 105, checkId: "brsrv-hostname", expected: `BR-SRV.${domain}` },
   { vmid: 106, checkId: "cli-hostname", expected: `HQ-CLI.${domain}` }
 ];
+
+export function parseEcoRouterDomain(config) {
+  return config.match(/^\s*ip\s+domain\s+name\s+(\S+)\s*$/im)?.[1] || null;
+}
 
 function ensureHostnameCheck(device, rule) {
   let check = device.checks.find((item) => item.id === rule.checkId);
@@ -20,7 +24,7 @@ function ensureHostnameCheck(device, rule) {
     title: "Hostname",
     maxScore: 1,
     method: "QEMU Guest Agent",
-    expected: rule.expected
+    expected: rule.expectedDomain ? `${rule.expected} + domain ${rule.expectedDomain}` : rule.expected
   });
   return check;
 }
@@ -87,11 +91,16 @@ export async function applyEcoRouterHostnameChecks(assessment, proxmox, serial, 
       report({ kind: "command", vmid: rule.vmid, device: device.name, command: "show hostname", message: `Проверяем hostname ${device.name} через serial CLI` });
       const credentials = await proxmox.vmConsoleCredentials(rule.vmid);
       const actual = await serial.getHostname(rule.vmid, credentials);
-      const matches = actual.localeCompare(rule.expected, undefined, { sensitivity: "accent" }) === 0;
+      report({ kind: "command", vmid: rule.vmid, device: device.name, command: "show running-config", message: `Проверяем ip domain name на ${device.name}` });
+      const config = await serial.getRunningConfig(rule.vmid, credentials);
+      const actualDomain = parseEcoRouterDomain(config);
+      const hostnameMatches = actual.localeCompare(rule.expected, undefined, { sensitivity: "accent" }) === 0;
+      const domainMatches = actualDomain?.localeCompare(rule.expectedDomain, undefined, { sensitivity: "accent" }) === 0;
+      const matches = hostnameMatches && domainMatches;
       Object.assign(check, {
         status: matches ? "pass" : "fail", score: matches ? 1 : 0, source: "live",
         method: "EcoRouter serial CLI", duration: Math.max(1, Math.round(performance.now() - startedAt)),
-        evidence: `ожидается=${rule.expected} · получено=${actual}`
+        evidence: `hostname: ожидается=${rule.expected} · получено=${actual} · domain: ожидается=${rule.expectedDomain} · получено=${actualDomain || "не задан"}`
       });
     } catch (error) {
       Object.assign(check, {

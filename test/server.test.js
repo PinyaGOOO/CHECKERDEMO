@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { snapshot } from "../src/data/assessment.js";
 import { ProxmoxSshAdapter } from "../src/adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-server.js";
-import { applyHostnameChecks, recalculateDeviceScores } from "../src/checks/hostnames.js";
+import { applyHostnameChecks, parseEcoRouterDomain, recalculateDeviceScores } from "../src/checks/hostnames.js";
 import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
 import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
 import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
@@ -87,6 +87,11 @@ test("EcoRouter serial output parser extracts hostname", () => {
   assert.equal(parseEcoRouterHostname(output), "ecorouter");
 });
 
+test("EcoRouter domain parser reads ip domain name independently from hostname", () => {
+  assert.equal(parseEcoRouterDomain("hostname hq-rtr\nip domain name au-team.irpo\n"), "au-team.irpo");
+  assert.equal(parseEcoRouterDomain("hostname hq-rtr\n"), null);
+});
+
 test("basic network helpers ignore loopback and parse default route", () => {
   const addresses = ipv4Addresses([
     { name: "lo", "ip-addresses": [{ "ip-address": "127.0.0.1", "ip-address-type": "ipv4", prefix: 8 }] },
@@ -158,7 +163,7 @@ test("topology check accepts arbitrary non-overlapping RFC1918 networks", async 
   const events = [];
   await applyTopologyNetworkChecks(data, adapter, serial, (event) => events.push(event));
   const results = events.filter((event) => event.kind === "result");
-  assert.equal(results.length, 12);
+  assert.equal(results.length, 9);
   assert.ok(results.every((event) => event.check.status === "pass"));
 });
 

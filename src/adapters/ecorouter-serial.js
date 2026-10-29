@@ -10,6 +10,18 @@ export function cleanTerminalOutput(value) {
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "");
 }
 
+function stripPagerMarkers(value) {
+  return value
+    .replace(/--More--(?:\(byte\s+\d+\))?/gi, "")
+    .replace(/\[K/g, "");
+}
+
+function cliPromptVisible(value) {
+  const lines = cleanTerminalOutput(value).split("\n");
+  const tail = lines.slice(-3).join("\n").trimEnd();
+  return /(?:^|\n)[A-Za-z0-9_.()-]+(?:\([^\n)]*\))?[>#]\s*$/.test(tail);
+}
+
 export function parseEcoRouterHostname(value) {
   const lines = cleanTerminalOutput(value).split("\n").map((line) => line.trim()).filter(Boolean);
   const candidates = lines.filter((line) =>
@@ -35,13 +47,14 @@ export class EcoRouterSerialAdapter {
       socket.once("connect", resolve);
       socket.once("error", reject);
     });
-    const timer = setTimeout(() => socket.destroy(new Error("Serial console timeout")), this.timeout);
+    const commandTimeout = Math.max(this.timeout, wait + 8_000);
+    const timer = setTimeout(() => socket.destroy(new Error("Serial console timeout")), commandTimeout);
 
     try {
       await connected;
       // Ctrl+C returns a half-entered login/password prompt to a known state,
       // and is harmless when an authenticated CLI prompt is already active.
-      socket.write("\x03\r\n");
+      socket.write("q\x03\r\n");
       await delay(650);
       let screen = cleanTerminalOutput(chunks.join(""));
 
@@ -57,8 +70,26 @@ export class EcoRouterSerialAdapter {
 
       chunks.length = 0;
       socket.write(`${command}\r\n`);
-      await delay(wait);
-      return cleanTerminalOutput(chunks.join(""));
+      const startedAt = Date.now();
+      let handledPagers = 0;
+      let promptSeenAt = null;
+      while (Date.now() - startedAt < commandTimeout - 250) {
+        await delay(100);
+        const output = chunks.join("");
+        const pagerCount = (cleanTerminalOutput(output).match(/--More--/gi) || []).length;
+        while (handledPagers < pagerCount) {
+          socket.write(" ");
+          handledPagers += 1;
+          promptSeenAt = null;
+        }
+        if (Date.now() - startedAt >= wait && cliPromptVisible(output)) {
+          promptSeenAt ||= Date.now();
+          if (Date.now() - promptSeenAt >= 200) break;
+        } else {
+          promptSeenAt = null;
+        }
+      }
+      return stripPagerMarkers(cleanTerminalOutput(chunks.join("")));
     } finally {
       clearTimeout(timer);
       socket.end();
