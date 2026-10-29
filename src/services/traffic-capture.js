@@ -3,7 +3,15 @@ import { promisify } from "node:util";
 import readline from "node:readline";
 
 const execFileAsync = promisify(execFile);
-const bridges = ["vmbr0", "ISP_HQ", "ISP_BR", "HQ_NET", "FW_NET", "BR_NET"];
+const captureTargets = [
+  { bridge: "vmbr0", interface: "tap100i0" },
+  { bridge: "ISP_HQ", interface: "ISP_HQ" },
+  { bridge: "ISP_BR", interface: "ISP_BR" },
+  { bridge: "HQ_NET", interface: "HQ_NET" },
+  { bridge: "FW_NET", interface: "FW_NET" },
+  { bridge: "BR_NET", interface: "BR_NET" }
+];
+const bridges = captureTargets.map((target) => target.bridge);
 const names = new Map([[100, "ISP"], [101, "HQ-RTR"], [102, "BR-RTR"], [103, "BR-FW"], [104, "HQ-SRV"], [105, "BR-SRV"], [106, "HQ-CLI"]]);
 
 function protocolOf(line) {
@@ -96,11 +104,8 @@ class TrafficCapture {
     this.running = true;
     try {
       this.macMap = await loadMacMap();
-      for (const bridge of bridges) {
-        const filter = bridge === "vmbr0"
-          ? "(arp or ip or ip6) and not tcp port 8007 and not tcp port 22"
-          : "arp or ip or ip6";
-        const child = spawn("/bin/tcpdump", ["-l", "-n", "-e", "-tt", "-q", "-i", bridge, filter], {
+      for (const { bridge, interface: captureInterface } of captureTargets) {
+        const child = spawn("/bin/tcpdump", ["-l", "-n", "-e", "-tt", "-q", "-i", captureInterface, "arp or ip or ip6"], {
           stdio: ["ignore", "pipe", "pipe"]
         });
         let stderr = "";
