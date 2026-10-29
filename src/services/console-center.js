@@ -170,12 +170,16 @@ class ConsoleCenter {
     }
   }
 
-  interrupt(token, vmid) {
+  async interrupt(token, vmid) {
     if (!allowedVmids.has(vmid)) throw new Error("Unsupported VMID");
     const device = this.owner(token).devices.get(vmid);
     if (!device) throw new Error("Console is not connected");
     if (device.type !== "serial") throw new Error("Ctrl+C доступен только в serial-консолях");
     device.socket.write("\u0003");
+    if (device.rootConsole) {
+      const command = "pgid=$(ps -t ttyS0 -o tpgid= 2>/dev/null | awk '$1 > 0 {print $1; exit}'); test -z \"$pgid\" || kill -INT -- \"-$pgid\" 2>/dev/null || true";
+      await adapter.guestExec(vmid, "/bin/sh", ["-lc", command]).catch(() => {});
+    }
   }
 
   async disconnect(token, vmid) {

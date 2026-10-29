@@ -169,7 +169,7 @@ async function handleRequest(request, response) {
           const { command, data, raw } = await readJson(request);
           await consoleCenter.input(session.token, vmid, raw ? data : command, { raw: Boolean(raw) });
         }
-        if (match[2] === "interrupt") consoleCenter.interrupt(session.token, vmid);
+        if (match[2] === "interrupt") await consoleCenter.interrupt(session.token, vmid);
         if (match[2] === "resize") {
           const { cols, rows } = await readJson(request);
           consoleCenter.resize(session.token, vmid, cols, rows);

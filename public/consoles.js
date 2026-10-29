@@ -7,11 +7,12 @@ const devices = [
   { vmid:104, name:"HQ-SRV", channel:"serial0" }, { vmid:105, name:"BR-SRV", channel:"serial0" },
   { vmid:106, name:"HQ-CLI", channel:"serial0" }
 ];
-const state = { stream:null, autoStarted:false, connected:new Set(), terminals:new Map(), dimensions:new Map(), qgaBuffers:new Map(), rawQueues:new Map() };
+const state = { stream:null, autoStarted:false, activeVmid:null, lastInterrupts:new Map(), connected:new Set(), terminals:new Map(), dimensions:new Map(), qgaBuffers:new Map(), rawQueues:new Map() };
 const grid = document.querySelector("#console-grid");
 document.querySelector("#dashboard-link").href = `http://${location.hostname}:8007/`;
 
 function card(vmid) { return document.querySelector(`[data-vmid="${vmid}"]`); }
+function isCtrlC(event) { return event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && (event.code === "KeyC" || String(event.key).toLowerCase() === "c" || event.key === "\u0003"); }
 
 function fitWithCursorGutter(vmid, terminal, fit) {
   const dimensions = fit.proposeDimensions();
@@ -33,14 +34,13 @@ function createTerminal(device, host) {
   fitWithCursorGutter(device.vmid, terminal, fit);
   terminal.writeln("Подготавливается root-консоль…");
   terminal.onData((data) => device.qga ? handleQgaInput(device.vmid, data) : queueRawInput(device.vmid, data));
-  host.addEventListener("keydown", (event) => {
-    if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || event.code !== "KeyC") return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (!state.connected.has(device.vmid)) return;
-    if (device.qga) handleQgaInput(device.vmid, "\u0003");
-    else sendInterrupt(device.vmid);
-  }, true);
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (event.type !== "keydown" || !isCtrlC(event)) return true;
+    if (state.connected.has(device.vmid)) device.qga ? handleQgaInput(device.vmid, "\u0003") : sendInterrupt(device.vmid);
+    return false;
+  });
+  host.addEventListener("pointerdown", () => { state.activeVmid = device.vmid; });
+  host.addEventListener("focusin", () => { state.activeVmid = device.vmid; });
   let resizeFrame = null;
   new ResizeObserver(() => {
     cancelAnimationFrame(resizeFrame);
@@ -56,8 +56,9 @@ function renderCards() {
     const article = document.createElement("article");
     article.className = "console-card";
     article.dataset.vmid = device.vmid;
-    article.innerHTML = `<header class="console-card-header"><div class="console-title"><i></i><span><strong>${device.vmid} · ${device.name}</strong><small>Отключено</small></span></div><div class="card-actions"><span class="channel">${device.channel}</span><button class="card-connect" type="button">Подключить</button></div></header><div class="terminal" aria-label="Консоль ${device.name}"></div>`;
+    article.innerHTML = `<header class="console-card-header"><div class="console-title"><i></i><span><strong>${device.vmid} · ${device.name}</strong><small>Отключено</small></span></div><div class="card-actions"><span class="channel">${device.channel}</span>${device.qga ? "" : '<button class="card-interrupt" type="button" disabled>Ctrl+C</button>'}<button class="card-connect" type="button">Подключить</button></div></header><div class="terminal" aria-label="Консоль ${device.name}"></div>`;
     article.querySelector(".card-connect").addEventListener("click", () => state.connected.has(device.vmid) ? disconnect(device.vmid) : connect(device.vmid));
+    article.querySelector(".card-interrupt")?.addEventListener("click", () => sendInterrupt(device.vmid));
     grid.append(article);
     createTerminal(device, article.querySelector(".terminal"));
   }
@@ -108,6 +109,9 @@ function queueRawInput(vmid, data) {
 }
 
 function sendInterrupt(vmid) {
+  const now = performance.now();
+  if (now - (state.lastInterrupts.get(vmid) || 0) < 100) return;
+  state.lastInterrupts.set(vmid, now);
   api(`/api/console/${vmid}/interrupt`).catch((error) => appendOutput(vmid, `\r\n\x1b[31mCtrl+C: ${error.message}\x1b[0m\r\n`));
 }
 
@@ -144,6 +148,8 @@ function setStatus(vmid, status, detail) {
   if (connected) state.connected.add(vmid); else state.connected.delete(vmid);
   element.querySelector(".console-title small").textContent = detail || ({ connected:"Подключено", disconnected:"Отключено", connecting:"Подключение…", error:"Ошибка" })[status] || status;
   element.querySelector(".card-connect").textContent = connected ? "Отключить" : "Подключить";
+  const interruptButton = element.querySelector(".card-interrupt");
+  if (interruptButton) interruptButton.disabled = !connected;
   const terminal = terminalFor(vmid);
   if (terminal) {
     terminal.options.disableStdin = !connected;
@@ -154,6 +160,15 @@ function setStatus(vmid, status, detail) {
     }
   }
 }
+
+document.addEventListener("keydown", (event) => {
+  if (!isCtrlC(event) || state.activeVmid === null || !state.connected.has(state.activeVmid)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const device = devices.find((item) => item.vmid === state.activeVmid);
+  if (device?.qga) handleQgaInput(device.vmid, "\u0003");
+  else sendInterrupt(state.activeVmid);
+}, true);
 
 function openEventStream() {
   state.stream?.close();
