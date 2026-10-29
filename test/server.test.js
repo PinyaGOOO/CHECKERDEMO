@@ -10,6 +10,7 @@ import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/inter
 import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../src/checks/ecorouter-routing.js";
 import { parseClientDhcp, parseDhcpServerConfig, parseResolvSearch } from "../src/checks/dhcp-timezone.js";
 import { parseEcoRouterUser } from "../src/checks/users.js";
+import { parseSshAssessment } from "../src/checks/ssh.js";
 import { parseTcpdumpLine } from "../src/services/traffic-capture.js";
 
 test("assessment scores are internally consistent", () => {
@@ -265,6 +266,26 @@ test("EcoRouter user parser requires a password and admin role", () => {
     role: "admin"
   });
   assert.equal(parseEcoRouterUser("username admin\n role admin\n", "net_admin"), null);
+});
+
+test("SSH assessment parser reads effective policy and listening ports", () => {
+  const state = parseSshAssessment(`port 2026
+allowusers sshuser
+maxauthtries 2
+banner /etc/openssh/banner
+---LISTEN---
+LISTEN 0 128 0.0.0.0:2026 0.0.0.0:*
+LISTEN 0 128 [::]:2026 [::]:*
+---SERVICE---
+active
+---BANNER---
+Authorized access only
+`);
+  assert.deepEqual(state.ports, [2026]);
+  assert.deepEqual(state.allowUsers, ["sshuser"]);
+  assert.equal(state.maxAuthTries, 2);
+  assert.equal(state.active && state.listens2026 && !state.listens22, true);
+  assert.equal(state.banner, "Authorized access only");
 });
 
 test("tcpdump parser extracts real packet metadata and resolves VM MAC addresses", () => {

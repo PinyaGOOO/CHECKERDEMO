@@ -58,7 +58,6 @@ async function collectLinuxUser(vmid, adapter, report) {
     const output = outputOf(await adapter.guestExec(vmid, "/bin/sh", ["-lc", script]));
     return {
       uid: Number(output.match(/^UID=(\d+)/m)?.[1] || 0),
-      groups: output.match(/^GROUPS=(.*)$/m)?.[1]?.trim().split(/\s+/).filter(Boolean) || [],
       password: /^PASSWORD=yes$/m.test(output),
       sudo: /^SUDO=yes$/m.test(output),
       error: null
@@ -81,12 +80,12 @@ export async function applyUserChecks(assessment, adapter, serial, report = () =
       title: "Пользователь sshuser",
       maxScore: 2,
       method: "QEMU Guest Agent · id + sudo",
-      expected: "UID=2026 · пароль установлен · wheel · sudo без пароля"
+      expected: "UID=2026 · пароль установлен · sudo выполняется без запроса пароля"
     });
     if (result.error) setResult(check, "unknown", `QGA недоступен · ${result.error}`, duration());
     else {
-      const valid = result.uid === 2026 && result.password && result.groups.includes("wheel") && result.sudo;
-      setResult(check, valid ? "pass" : "fail", `UID=${result.uid || "нет"} · пароль=${result.password ? "верный" : "не подтверждён"} · wheel=${result.groups.includes("wheel") ? "да" : "нет"} · sudo NOPASSWD=${result.sudo ? "да" : "нет"}`, duration());
+      const valid = result.uid === 2026 && result.password && result.sudo;
+      setResult(check, valid ? "pass" : "fail", `UID=${result.uid || "нет"} · пароль=${result.password ? "верный" : "не подтверждён"} · sudo без пароля=${result.sudo ? "да" : "нет"}`, duration());
     }
     reportResult(report, device, check);
   }

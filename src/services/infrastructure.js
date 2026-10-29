@@ -6,6 +6,7 @@ import { applyInternetAccessChecks } from "../checks/internet-access.js";
 import { applyEcoRouterRoutingChecks } from "../checks/ecorouter-routing.js";
 import { applyDhcpAndTimezoneChecks } from "../checks/dhcp-timezone.js";
 import { applyUserChecks } from "../checks/users.js";
+import { applySshChecks } from "../checks/ssh.js";
 
 const adapter = new ProxmoxSshAdapter({
   alias: process.env.CHECKER_SSH_ALIAS || "checker",
@@ -60,6 +61,7 @@ export async function applyLiveInfrastructure(assessment, { report = () => {} } 
       await applyEcoRouterRoutingChecks(assessment, adapter, ecoRouterSerial, report);
       await applyDhcpAndTimezoneChecks(assessment, adapter, ecoRouterSerial, report);
       await applyUserChecks(assessment, adapter, ecoRouterSerial, report);
+      await applySshChecks(assessment, adapter, report);
     }
     recalculateDeviceScores(assessment);
   } catch (error) {
