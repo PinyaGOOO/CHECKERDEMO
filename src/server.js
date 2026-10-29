@@ -9,8 +9,10 @@ import { applyLiveInfrastructure, getInfrastructure, resetInfrastructureCache } 
 import { trafficCapture } from "./services/traffic-capture.js";
 import { consoleCenter } from "./services/console-center.js";
 import { createSession, sessionCookie, sessionFromRequest } from "./services/console-auth.js";
+import { attachVncWebSocket } from "./services/vnc-websocket.js";
 
 const root = fileURLToPath(new URL("../public/", import.meta.url));
+const novncRoot = fileURLToPath(new URL("../node_modules/@novnc/novnc/", import.meta.url));
 const vendorFiles = new Map([
   ["/vendor/xterm/xterm.mjs", fileURLToPath(new URL("../node_modules/@xterm/xterm/lib/xterm.mjs", import.meta.url))],
   ["/vendor/xterm/xterm.css", fileURLToPath(new URL("../node_modules/@xterm/xterm/css/xterm.css", import.meta.url))],
@@ -117,7 +119,12 @@ async function serveStatic(pathname, response) {
 }
 
 async function serveVendor(pathname, response) {
-  const resolved = vendorFiles.get(pathname);
+  let resolved = vendorFiles.get(pathname);
+  if (!resolved && pathname.startsWith("/vendor/novnc/")) {
+    const relative = pathname.slice("/vendor/novnc/".length);
+    const candidate = normalize(join(novncRoot, relative));
+    if (candidate.startsWith(novncRoot)) resolved = candidate;
+  }
   if (!resolved) return false;
   try {
     const content = await readFile(resolved);
@@ -259,7 +266,9 @@ server.listen(port, "0.0.0.0", () => {
 const tlsKey = process.env.CONSOLE_TLS_KEY || "/etc/web-demo-checker/tls.key";
 const tlsCert = process.env.CONSOLE_TLS_CERT || "/etc/web-demo-checker/tls.crt";
 if (existsSync(tlsKey) && existsSync(tlsCert)) {
-  https.createServer({ key: readFileSync(tlsKey), cert: readFileSync(tlsCert) }, handleRequest).listen(consolePort, "0.0.0.0", () => {
+  const consoleServer = https.createServer({ key: readFileSync(tlsKey), cert: readFileSync(tlsCert) }, handleRequest);
+  attachVncWebSocket(consoleServer, sessionFromRequest);
+  consoleServer.listen(consolePort, "0.0.0.0", () => {
     console.log(`Console Center: https://localhost:${consolePort}`);
   });
 } else {

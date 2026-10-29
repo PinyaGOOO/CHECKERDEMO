@@ -48,7 +48,7 @@
         <div class="topology-wrap">
           <svg id="topology" viewBox="0 0 1200 650" role="img" aria-labelledby="topology-title topology-description">
             <title id="topology-title">Топология учебного стенда</title>
-            <desc id="topology-description">ISP соединён с маршрутизаторами HQ и BR. К ним подключены серверы, клиент и межсетевой экран.</desc>
+            <desc id="topology-description">ISP соединён с HQ-RTR и BR-RTR. В ветке BR трафик проходит через BR-FW к BR-SRV.</desc>
             <defs>
               <filter id="packet-glow" x="-200%" y="-200%" width="400%" height="400%">
                 <feGaussianBlur stdDeviation="5" result="blur" />
@@ -61,15 +61,15 @@
               <path data-link="isp-brrtr" d="M640 230 L810 310" />
               <path data-link="hqrtr-hqsrv" d="M330 370 L235 505" />
               <path data-link="hqrtr-hqcli" d="M390 370 L465 505" />
-              <path data-link="brrtr-brfw" d="M810 370 L735 505" />
-              <path data-link="brrtr-brsrv" d="M870 370 L965 505" />
+              <path data-link="brrtr-brfw" d="M850 370 L850 420" />
+              <path data-link="brfw-brsrv" d="M850 490 L850 540" />
             </g>
             <g class="network-labels" aria-hidden="true">
               <text x="470" y="265">WAN HQ · /28</text>
               <text x="657" y="265">WAN BR · /28</text>
               <text x="228" y="445">VLAN 100 · /27</text>
               <text x="420" y="445">VLAN 200 · /24</text>
-              <text x="888" y="445">BR LAN · /28</text>
+              <text x="875" y="522">BR LAN · /28</text>
             </g>
             <g class="node internet-node" data-node="internet" transform="translate(520 42)">
               <rect width="160" height="62" rx="18" />
@@ -106,13 +106,13 @@
               <text class="node-name" x="80" y="32">106 · HQ-CLI</text>
               <text class="node-meta" x="80" y="52">клиент</text>
             </g>
-            <g class="node firewall" data-node="brfw" data-vmid="103" transform="translate(655 505)">
+            <g class="node firewall" data-node="brfw" data-vmid="103" transform="translate(770 420)">
               <rect width="160" height="70" rx="12" />
               <circle class="state-dot" cx="17" cy="17" r="5" />
               <text class="node-name" x="80" y="32">103 · BR-FW</text>
               <text class="node-meta" x="80" y="52">Ideco NGFW</text>
             </g>
-            <g class="node" data-node="brsrv" data-vmid="105" transform="translate(885 505)">
+            <g class="node" data-node="brsrv" data-vmid="105" transform="translate(770 540)">
               <rect width="160" height="70" rx="12" />
               <circle class="state-dot" cx="17" cy="17" r="5" />
               <text class="node-name" x="80" y="32">105 · BR-SRV</text>

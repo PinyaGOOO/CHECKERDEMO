@@ -1,13 +1,17 @@
 import { Terminal } from "/vendor/xterm/xterm.mjs";
 import { FitAddon } from "/vendor/xterm/addon-fit.mjs";
+import RFB from "/vendor/novnc/core/rfb.js";
 
 const devices = [
-  { vmid:100, name:"ISP", channel:"serial0" }, { vmid:101, name:"HQ-RTR", channel:"serial0" },
-  { vmid:102, name:"BR-RTR", channel:"serial0" }, { vmid:103, name:"BR-FW", channel:"QGA shell", qga:true },
-  { vmid:104, name:"HQ-SRV", channel:"serial0" }, { vmid:105, name:"BR-SRV", channel:"serial0" },
-  { vmid:106, name:"HQ-CLI", channel:"serial0" }
+  { vmid:100, name:"ISP", channel:"serial0", area:"isp" },
+  { vmid:101, name:"HQ-RTR", channel:"serial0", area:"hq-rtr" },
+  { vmid:104, name:"HQ-SRV", channel:"serial0", area:"hq-srv" },
+  { vmid:106, name:"HQ-CLI", channel:"VNC", area:"hq-cli", vnc:true },
+  { vmid:102, name:"BR-RTR", channel:"serial0", area:"br-rtr" },
+  { vmid:103, name:"BR-FW", channel:"VNC", area:"br-fw", vnc:true },
+  { vmid:105, name:"BR-SRV", channel:"serial0", area:"br-srv" }
 ];
-const state = { stream:null, autoStarted:false, activeVmid:null, lastInterrupts:new Map(), connected:new Set(), terminals:new Map(), dimensions:new Map(), qgaBuffers:new Map(), rawQueues:new Map() };
+const state = { stream:null, autoStarted:false, activeVmid:null, lastInterrupts:new Map(), connected:new Set(), terminals:new Map(), rfbs:new Map(), dimensions:new Map(), rawQueues:new Map() };
 const grid = document.querySelector("#console-grid");
 document.querySelector("#dashboard-link").href = `http://${location.hostname}:8007/`;
 
@@ -33,10 +37,10 @@ function createTerminal(device, host) {
   terminal.open(host);
   fitWithCursorGutter(device.vmid, terminal, fit);
   terminal.writeln("Подготавливается root-консоль…");
-  terminal.onData((data) => device.qga ? handleQgaInput(device.vmid, data) : queueRawInput(device.vmid, data));
+  terminal.onData((data) => queueRawInput(device.vmid, data));
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown" || !isCtrlC(event)) return true;
-    if (state.connected.has(device.vmid)) device.qga ? handleQgaInput(device.vmid, "\u0003") : sendInterrupt(device.vmid);
+    if (state.connected.has(device.vmid)) sendInterrupt(device.vmid);
     return false;
   });
   host.addEventListener("pointerdown", () => { state.activeVmid = device.vmid; });
@@ -51,16 +55,56 @@ function createTerminal(device, host) {
   state.terminals.set(device.vmid, { terminal, fit });
 }
 
+function vncUrl(vmid, ticket) {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${location.host}/api/console/${vmid}/vnc?ticket=${encodeURIComponent(ticket)}`;
+}
+
+function connectVnc(device) {
+  if (state.rfbs.has(device.vmid)) return;
+  const host = card(device.vmid).querySelector(".vnc-screen");
+  const ticket = `${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
+  const rfb = new RFB(host, vncUrl(device.vmid, ticket), { credentials:{ password:ticket } });
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+  rfb.showDotCursor = true;
+  rfb.background = "#050b12";
+  state.rfbs.set(device.vmid, rfb);
+  setStatus(device.vmid, "connecting", "VNC подключается…");
+  rfb.addEventListener("credentialsrequired", () => rfb.sendCredentials({ password:ticket }));
+  rfb.addEventListener("connect", () => {
+    host.classList.add("ready");
+    setStatus(device.vmid, "connected", "Графическая VNC-консоль");
+    host.focus();
+  });
+  rfb.addEventListener("securityfailure", (event) => setStatus(device.vmid, "error", event.detail?.reason || "Ошибка VNC-аутентификации"));
+  rfb.addEventListener("disconnect", (event) => {
+    state.rfbs.delete(device.vmid);
+    host.classList.remove("ready");
+    setStatus(device.vmid, event.detail?.clean ? "disconnected" : "error", event.detail?.clean ? "Отключено" : "VNC-соединение потеряно");
+  });
+}
+
+function disconnectVnc(device) {
+  const rfb = state.rfbs.get(device.vmid);
+  if (rfb) rfb.disconnect();
+  state.rfbs.delete(device.vmid);
+  card(device.vmid)?.querySelector(".vnc-screen")?.classList.remove("ready");
+  setStatus(device.vmid, "disconnected");
+}
+
 function renderCards() {
+  grid.insertAdjacentHTML("beforeend", '<div class="branch-heading hq-heading"><span>ЛЕВАЯ ЛИНИЯ</span><strong>HQ</strong></div><div class="branch-heading br-heading"><span>ПРАВАЯ ЛИНИЯ</span><strong>BR</strong></div>');
   for (const device of devices) {
     const article = document.createElement("article");
-    article.className = "console-card";
+    article.className = `console-card${device.vnc ? " vnc-card" : ""}`;
     article.dataset.vmid = device.vmid;
-    article.innerHTML = `<header class="console-card-header"><div class="console-title"><i></i><span><strong>${device.vmid} · ${device.name}</strong><small>Отключено</small></span></div><div class="card-actions"><span class="channel">${device.channel}</span>${device.qga ? "" : '<button class="card-interrupt" type="button" disabled>Ctrl+C</button>'}<button class="card-connect" type="button">Подключить</button></div></header><div class="terminal" aria-label="Консоль ${device.name}"></div>`;
+    article.style.gridArea = device.area;
+    article.innerHTML = `<header class="console-card-header"><div class="console-title"><i></i><span><strong>${device.vmid} · ${device.name}</strong><small>Отключено</small></span></div><div class="card-actions"><span class="channel">${device.channel}</span>${device.vnc ? "" : '<button class="card-interrupt" type="button" disabled>Ctrl+C</button>'}<button class="card-connect" type="button">Подключить</button></div></header>${device.vnc ? `<div class="vnc-screen" tabindex="0" aria-label="Графическая консоль ${device.name}"><span class="vnc-placeholder">Подготавливается графическая консоль…</span></div>` : `<div class="terminal" aria-label="Консоль ${device.name}"></div>`}`;
     article.querySelector(".card-connect").addEventListener("click", () => state.connected.has(device.vmid) ? disconnect(device.vmid) : connect(device.vmid));
     article.querySelector(".card-interrupt")?.addEventListener("click", () => sendInterrupt(device.vmid));
     grid.append(article);
-    createTerminal(device, article.querySelector(".terminal"));
+    if (!device.vnc) createTerminal(device, article.querySelector(".terminal"));
   }
 }
 
@@ -115,30 +159,6 @@ function sendInterrupt(vmid) {
   api(`/api/console/${vmid}/interrupt`).catch((error) => appendOutput(vmid, `\r\n\x1b[31mCtrl+C: ${error.message}\x1b[0m\r\n`));
 }
 
-function handleQgaInput(vmid, data) {
-  if (!state.connected.has(vmid)) return;
-  const terminal = terminalFor(vmid);
-  let buffer = state.qgaBuffers.get(vmid) || "";
-  for (const character of data) {
-    if (character === "\r") {
-      const command = buffer;
-      buffer = "";
-      writeAndFollow(terminal, "\r\n");
-      if (command.trim()) api(`/api/console/${vmid}/input`, { command }).catch((error) => writeAndFollow(terminal, `\x1b[31m${error.message}\x1b[0m\r\n# `));
-      else writeAndFollow(terminal, "# ");
-    } else if (character === "\u007f") {
-      if (buffer.length) { buffer = buffer.slice(0, -1); terminal.write("\b \b"); }
-    } else if (character === "\u0003") {
-      buffer = "";
-      writeAndFollow(terminal, "^C\r\n# ");
-    } else if (character >= " " && character !== "\u007f") {
-      buffer += character;
-      terminal.write(character);
-    }
-  }
-  state.qgaBuffers.set(vmid, buffer);
-}
-
 function setStatus(vmid, status, detail) {
   const element = card(vmid);
   if (!element) return;
@@ -166,8 +186,7 @@ document.addEventListener("keydown", (event) => {
   event.preventDefault();
   event.stopImmediatePropagation();
   const device = devices.find((item) => item.vmid === state.activeVmid);
-  if (device?.qga) handleQgaInput(device.vmid, "\u0003");
-  else sendInterrupt(state.activeVmid);
+  if (!device?.vnc) sendInterrupt(state.activeVmid);
 }, true);
 
 function openEventStream() {
@@ -189,12 +208,16 @@ function openEventStream() {
 }
 
 async function connect(vmid) {
+  const device = devices.find((item) => item.vmid === vmid);
+  if (device?.vnc) return connectVnc(device);
   setStatus(vmid, "connecting");
   try { terminalFor(vmid)?.clear(); await api(`/api/console/${vmid}/connect`); }
   catch (error) { setStatus(vmid, "error", error.message); appendOutput(vmid, `\x1b[31mОшибка: ${error.message}\x1b[0m\r\n`); }
 }
 
 async function disconnect(vmid) {
+  const device = devices.find((item) => item.vmid === vmid);
+  if (device?.vnc) return disconnectVnc(device);
   try { await api(`/api/console/${vmid}/disconnect`); }
   finally { setStatus(vmid, "disconnected"); }
 }

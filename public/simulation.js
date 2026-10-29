@@ -1,4 +1,4 @@
-const positions = { internet:[600,73], isp:[600,205], hqrtr:[350,335], brrtr:[850,335], hqsrv:[235,540], hqcli:[465,540], brfw:[735,540], brsrv:[965,540] };
+const positions = { internet:[600,73], isp:[600,205], hqrtr:[350,335], brrtr:[850,335], hqsrv:[235,540], hqcli:[465,540], brfw:[850,455], brsrv:[850,575] };
 const labels = { internet:"Интернет", isp:"ISP", hqrtr:"HQ-RTR", brrtr:"BR-RTR", hqsrv:"HQ-SRV", hqcli:"HQ-CLI", brfw:"BR-FW", brsrv:"BR-SRV" };
 const vmNodes = new Map([[100,"isp"],[101,"hqrtr"],[102,"brrtr"],[103,"brfw"],[104,"hqsrv"],[105,"brsrv"],[106,"hqcli"]]);
 const bridgeMembers = {
@@ -7,7 +7,7 @@ const bridgeMembers = {
 };
 const bridgeLinks = {
   vmbr0:["internet-isp"], ISP_HQ:["isp-hqrtr"], ISP_BR:["isp-brrtr"],
-  HQ_NET:["hqrtr-hqsrv","hqrtr-hqcli"], FW_NET:["brrtr-brfw"], BR_NET:["brrtr-brsrv"]
+  HQ_NET:["hqrtr-hqsrv","hqrtr-hqcli"], FW_NET:["brrtr-brfw"], BR_NET:["brfw-brsrv"]
 };
 const state = { stream:null, running:false, count:0, packets:[], animationId:null };
 const packetLayer = document.querySelector("#packet-layer");
