@@ -103,6 +103,8 @@ class TrafficCapture {
         const child = spawn("/bin/tcpdump", ["-l", "-n", "-e", "-tt", "-q", "-i", bridge, filter], {
           stdio: ["ignore", "pipe", "pipe"]
         });
+        let stderr = "";
+        child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
         this.processes.set(bridge, child);
         const lines = readline.createInterface({ input: child.stdout });
         lines.on("line", (line) => {
@@ -111,7 +113,10 @@ class TrafficCapture {
         });
         child.once("exit", (code) => {
           this.processes.delete(bridge);
-          if (this.running && code) this.publish({ type: "capture-error", bridge, message: `tcpdump завершился с кодом ${code}` });
+          if (this.running && code) {
+            const detail = stderr.trim().split(/\r?\n/).at(-1);
+            this.publish({ type: "capture-error", bridge, message: detail || `tcpdump завершился с кодом ${code}` });
+          }
         });
       }
       this.publish({ type: "capture-status", status: "running", bridges });
