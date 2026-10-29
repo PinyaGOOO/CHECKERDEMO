@@ -65,9 +65,12 @@ function te0BindingValid(config, interfaceName) {
   const tail = config.slice(start);
   const nextPort = tail.slice(1).search(/^\s*port\s+\S+/im);
   const block = nextPort < 0 ? tail : tail.slice(0, nextPort + 1);
-  return /service-instance\s+\S+/i.test(block)
+  const serviceInstance = block.match(/service-instance\s+(\S+)/i)?.[1];
+  const explicitBinding = new RegExp(`connect\\s+ip\\s+interface\\s+${escapeRegex(interfaceName)}\\b`, "i").test(block);
+  const implicitBinding = serviceInstance?.localeCompare(interfaceName, undefined, { sensitivity: "accent" }) === 0;
+  return Boolean(serviceInstance)
     && /encapsulation\s+untagged\b/i.test(block)
-    && new RegExp(`connect\\s+ip\\s+interface\\s+${escapeRegex(interfaceName)}\\b`, "i").test(block);
+    && (explicitBinding || implicitBinding);
 }
 
 async function collectIsp(adapter, report) {

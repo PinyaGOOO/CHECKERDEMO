@@ -174,6 +174,8 @@ test("internet access helpers validate dynamic NAT and EcoRouter WAN binding", (
   assert.equal(hasMasquerade(nat, "172.20.9.0/28"), false);
   assert.equal(hasMasquerade(nat.replace("ens19", "ens20"), "172.20.8.0/28"), false);
 
+  assert.equal(te0BindingValid("port te0\n service-instance int\n  encapsulation untagged\n!\ninterface int\n", "int"), true);
+
   const config = `
 interface uplink
  ip address 172.20.8.2/28
