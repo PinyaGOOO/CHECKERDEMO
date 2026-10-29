@@ -81,8 +81,8 @@ async function collectIsp(adapter, report) {
     report({ kind: "command", vmid: 100, device: "ISP", command: "cat /etc/net/ifaces/ens19/options; ip -4 route show default", message: "Проверяем DHCP и маршрут ISP" });
     const upstream = outputOf(await adapter.guestExec(100, "/bin/sh", ["-lc", "cat /etc/net/ifaces/ens19/options 2>/dev/null; printf '\\n---ROUTE---\\n'; /usr/sbin/ip -4 route show default"]));
     [result.optionsOutput, result.routeOutput] = upstream.split("---ROUTE---");
-    report({ kind: "command", vmid: 100, device: "ISP", command: "cat /proc/sys/net/ipv4/ip_forward; cat /etc/net/sysctl.conf", message: "Проверяем IP forwarding" });
-    result.forwardingOutput = outputOf(await adapter.guestExec(100, "/bin/sh", ["-lc", "printf '%s\\n' \"$(cat /proc/sys/net/ipv4/ip_forward)\"; cat /etc/net/sysctl.conf 2>/dev/null"]));
+    report({ kind: "command", vmid: 100, device: "ISP", command: "cat /etc/sysctl.conf", message: "Проверяем IP forwarding в /etc/sysctl.conf" });
+    result.forwardingOutput = outputOf(await adapter.guestExec(100, "/bin/sh", ["-lc", "cat /etc/sysctl.conf 2>/dev/null"]));
     report({ kind: "command", vmid: 100, device: "ISP", command: "iptables-save -t nat; systemctl is-enabled iptables", message: "Проверяем NAT и сохранение правил" });
     result.natOutput = outputOf(await adapter.guestExec(100, "/bin/sh", ["-lc", "command -v iptables-save >/dev/null && iptables-save -t nat; printf '\\n---SERVICE---\\n'; systemctl is-enabled iptables 2>/dev/null; test -s /etc/sysconfig/iptables && echo persistent=yes"]));
   } catch (error) {
@@ -132,15 +132,15 @@ export async function applyInternetAccessChecks(assessment, adapter, serial, rep
   const forwardingCheck = upsertCheck(ispDevice, "isp-forwarding", {
     title: "Пересылка IPv4-пакетов",
     method: "QEMU Guest Agent",
-    expected: "runtime=1 · net.ipv4.ip_forward=1 в sysctl.conf"
+    expected: "net.ipv4.ip_forward = 1 в /etc/sysctl.conf"
   });
   if (isp.error) {
     setResult(forwardingCheck, "unknown", `QGA недоступен · ${isp.error}`, duration());
   } else {
-    const lines = isp.forwardingOutput.split(/\r?\n/);
-    const runtime = lines[0]?.trim() === "1";
-    const persistent = lines.slice(1).some((line) => /^\s*net\.ipv4\.ip_forward\s*=\s*1\s*(?:#.*)?$/.test(line));
-    setResult(forwardingCheck, runtime && persistent ? "pass" : "fail", `runtime=${runtime ? 1 : 0} · sysctl.conf=${persistent ? 1 : 0}`, duration());
+    const configured = isp.forwardingOutput.split(/\r?\n/).some((line) =>
+      /^\s*net\.ipv4\.ip_forward\s*=\s*1\s*(?:#.*)?$/.test(line)
+    );
+    setResult(forwardingCheck, configured ? "pass" : "fail", `/etc/sysctl.conf: ${configured ? "net.ipv4.ip_forward = 1 найдено" : "строка net.ipv4.ip_forward = 1 не найдена"}`, duration());
   }
   reportResult(report, ispDevice, forwardingCheck);
 
