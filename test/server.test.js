@@ -8,6 +8,7 @@ import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
 import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
 import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
 import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../src/checks/ecorouter-routing.js";
+import { parseClientDhcp, parseDhcpServerConfig } from "../src/checks/dhcp-timezone.js";
 import { parseTcpdumpLine } from "../src/services/traffic-capture.js";
 
 test("assessment scores are internally consistent", () => {
@@ -225,6 +226,35 @@ interface tunnel.7
   const ospf = parseOspfState(config, "Total number of full neighbors: 1\n1.1.1.1 1 Full/DR 00:00:30 10.10.10.1 tunnel.7", "O 192.168.1.0/24 [110/2] via 10.10.10.1", "tunnel.7");
   assert.equal(ospf.passiveDefault && ospf.onlyTunnelActive && ospf.neighborOnTunnel, true);
   assert.deepEqual(ospf.routeNetworks, ["192.168.1.0/24"]);
+});
+
+test("DHCP parsers recognize an EcoRouter server and a NetworkManager lease", () => {
+  const config = `
+ip pool VLAN200 192.168.200.2-192.168.200.254
+dhcp-server 1
+ pool VLAN200 1
+  mask 24
+  gateway 192.168.200.1
+  dns 192.168.100.2
+  domain-name au-team.irpo
+!
+interface clients
+ ip address 192.168.200.1/24
+ dhcp-server 1
+!`;
+  const parsed = parseDhcpServerConfig(config);
+  assert.deepEqual(parsed.addressPools.get("VLAN200"), { name: "VLAN200", start: "192.168.200.2", end: "192.168.200.254" });
+  assert.equal(parsed.servers[0].dns, "192.168.100.2");
+  assert.deepEqual(parsed.bindings, [{ interface: "clients", server: 1 }]);
+  assert.deepEqual(parseClientDhcp(`METHOD=auto
+IP4.ADDRESS[1]: 192.168.200.10/24
+IP4.GATEWAY: 192.168.200.1
+IP4.DNS[1]: 192.168.100.2
+IP4.DOMAIN[1]: au-team.irpo
+`), {
+    method: "auto", address: "192.168.200.10", prefix: 24, gateway: "192.168.200.1",
+    dns: ["192.168.100.2"], domains: ["au-team.irpo"]
+  });
 });
 
 test("tcpdump parser extracts real packet metadata and resolves VM MAC addresses", () => {

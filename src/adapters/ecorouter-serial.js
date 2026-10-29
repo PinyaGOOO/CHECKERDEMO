@@ -71,6 +71,11 @@ export class EcoRouterSerialAdapter {
         await delay(1_400);
       }
 
+      // A browser console may have been left inside configuration mode.
+      // Return to the privileged EXEC prompt before issuing show commands.
+      socket.write("end\r\n");
+      await delay(250);
+
       chunks.length = 0;
       socket.write(`${command}\r\n`);
       const startedAt = Date.now();
