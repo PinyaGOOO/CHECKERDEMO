@@ -33,6 +33,14 @@ function createTerminal(device, host) {
   fitWithCursorGutter(device.vmid, terminal, fit);
   terminal.writeln("Подготавливается root-консоль…");
   terminal.onData((data) => device.qga ? handleQgaInput(device.vmid, data) : queueRawInput(device.vmid, data));
+  host.addEventListener("keydown", (event) => {
+    if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || event.code !== "KeyC") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!state.connected.has(device.vmid)) return;
+    if (device.qga) handleQgaInput(device.vmid, "\u0003");
+    else queueRawInput(device.vmid, "\u0003");
+  }, true);
   let resizeFrame = null;
   new ResizeObserver(() => {
     cancelAnimationFrame(resizeFrame);
