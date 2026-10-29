@@ -23,12 +23,15 @@ function cliPromptVisible(value) {
 }
 
 export function parseEcoRouterHostname(value) {
-  const lines = cleanTerminalOutput(value).split("\n").map((line) => line.trim()).filter(Boolean);
+  const cleaned = cleanTerminalOutput(value);
+  const commandOffset = cleaned.toLowerCase().lastIndexOf("show hostname");
+  const response = commandOffset >= 0 ? cleaned.slice(commandOffset + "show hostname".length) : cleaned;
+  const lines = response.split("\n").map((line) => line.trim()).filter(Boolean);
   const candidates = lines.filter((line) =>
     /^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(line)
-    && !/^(Password|login|admin|enable)$/i.test(line)
+    && !/^(Password|login|admin|enable|end|exit|quit)$/i.test(line)
   );
-  return candidates.at(-1) || null;
+  return candidates[0] || null;
 }
 
 export class EcoRouterSerialAdapter {

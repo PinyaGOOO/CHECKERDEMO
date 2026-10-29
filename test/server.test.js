@@ -85,6 +85,7 @@ test("hostname checks compare case-insensitively and preserve unavailable state"
 test("EcoRouter serial output parser extracts hostname", () => {
   const output = "ecorouter>show hostname\r\n\recorouter\x1b[m\r\n\recorouter>";
   assert.equal(parseEcoRouterHostname(output), "ecorouter");
+  assert.equal(parseEcoRouterHostname("show hostname\nbr-rtr\nbr-rtr>\nend\n"), "br-rtr");
 });
 
 test("EcoRouter domain parser reads ip domain name independently from hostname", () => {
