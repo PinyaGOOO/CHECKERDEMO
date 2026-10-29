@@ -49,10 +49,15 @@ async function api(path, body = {}) {
 }
 
 function terminalFor(vmid) { return state.terminals.get(vmid)?.terminal; }
-function appendOutput(vmid, data) { terminalFor(vmid)?.write(data); }
+function writeAndFollow(terminal, data) {
+  if (!terminal) return;
+  terminal.write(data, () => terminal.scrollToBottom());
+}
+function appendOutput(vmid, data) { writeAndFollow(terminalFor(vmid), data); }
 
 function queueRawInput(vmid, data) {
   if (!state.connected.has(vmid)) return;
+  if (data.includes("\r") || data.includes("\n")) terminalFor(vmid)?.scrollToBottom();
   const queue = state.rawQueues.get(vmid) || { data:"", timer:null };
   queue.data += data;
   clearTimeout(queue.timer);
@@ -73,14 +78,14 @@ function handleQgaInput(vmid, data) {
     if (character === "\r") {
       const command = buffer;
       buffer = "";
-      terminal.write("\r\n");
-      if (command.trim()) api(`/api/console/${vmid}/input`, { command }).catch((error) => terminal.write(`\x1b[31m${error.message}\x1b[0m\r\n$ `));
-      else terminal.write("$ ");
+      writeAndFollow(terminal, "\r\n");
+      if (command.trim()) api(`/api/console/${vmid}/input`, { command }).catch((error) => writeAndFollow(terminal, `\x1b[31m${error.message}\x1b[0m\r\n$ `));
+      else writeAndFollow(terminal, "$ ");
     } else if (character === "\u007f") {
       if (buffer.length) { buffer = buffer.slice(0, -1); terminal.write("\b \b"); }
     } else if (character === "\u0003") {
       buffer = "";
-      terminal.write("^C\r\n$ ");
+      writeAndFollow(terminal, "^C\r\n$ ");
     } else if (character >= " " && character !== "\u007f") {
       buffer += character;
       terminal.write(character);
