@@ -162,7 +162,10 @@ async function collectRouter(vmid, adapter, serial, report) {
     result.neighbors = await serial.runCommand(vmid, credentials, "show ip ospf neighbor", 1_800);
     report({ kind: "command", vmid, command: "show ip route ospf", message: `Читаем маршруты OSPF на VM ${vmid}` });
     result.routes = await serial.runCommand(vmid, credentials, "show ip route ospf", 1_800);
-    result.interfaces = parseEcoRouterInterfaces(`${result.brief}\n${result.config}`);
+    // Only the interface table is authoritative here. Running-config also
+    // contains OSPF network statements and routes with CIDR values, which are
+    // not local interface addresses and must not become expected peer routes.
+    result.interfaces = parseEcoRouterInterfaces(result.brief);
     result.tunnel = parseTunnel(result.config, result.brief);
     result.ospf = parseOspfState(result.config, result.neighbors, result.routes, result.tunnel?.name);
   } catch (error) {
