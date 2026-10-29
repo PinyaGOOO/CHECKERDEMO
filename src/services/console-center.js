@@ -61,7 +61,7 @@ class ConsoleCenter {
       throw error;
     }
     const socket = net.createConnection({ path: `/var/run/qemu-server/${vmid}.serial0` });
-    const device = { type: "serial", socket, buffer: "", sentUser: false, sentPassword: false };
+    const device = { type: "serial", socket, buffer: "", sentUser: false, sentPassword: false, resetting: true };
     owner.devices.set(vmid, device);
     socket.on("connect", () => {
       this.publish(token, { type: "status", vmid, status: "connected", channel: "serial0" });
@@ -69,15 +69,21 @@ class ConsoleCenter {
     });
     socket.on("data", (chunk) => {
       const output = chunk.toString("utf8");
-      device.buffer = `${device.buffer}${cleanTerminalOutput(output)}`.slice(-600);
+      const plainOutput = cleanTerminalOutput(output);
+      device.buffer = `${device.buffer}${plainOutput}`.slice(-600);
       this.publish(token, { type: "output", vmid, data: output });
-      if (!device.sentUser && /login:\s*$/i.test(device.buffer)) {
+      if (device.resetting && /--More--/i.test(plainOutput)) {
+        device.resetting = false;
+        socket.write("q");
+        setTimeout(() => socket.write("\x03\r\n"), 120);
+      } else if (!device.sentUser && /login:\s*$/i.test(device.buffer)) {
         device.sentUser = true;
         socket.write(`${credentials.username}\r\n`);
       } else if (!device.sentPassword && /Password:\s*$/i.test(device.buffer)) {
         device.sentPassword = true;
         socket.write(`${credentials.password}\r\n`);
       }
+      if (/[#>]\s*$/.test(device.buffer)) device.resetting = false;
     });
     socket.on("error", (error) => {
       this.publish(token, { type: "status", vmid, status: "error", message: error.message });
