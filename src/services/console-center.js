@@ -193,6 +193,26 @@ class ConsoleCenter {
     this.publish(token, { type: "status", vmid, status: "disconnected" });
   }
 
+  async resetConnections(reason = "Консоль отключена на время автопроверки") {
+    const rootConsoleStops = [];
+    let disconnected = 0;
+    for (const [token, owner] of this.owners) {
+      for (const [vmid, device] of [...owner.devices]) {
+        owner.devices.delete(vmid);
+        this.locks.delete(vmid);
+        disconnected += 1;
+        if (device.type === "serial") device.socket.destroy();
+        if (device.rootConsole) rootConsoleStops.push(this.stopRootConsole(vmid).catch(() => {}));
+        this.publish(token, { type: "status", vmid, status: "disconnected", message: reason });
+      }
+    }
+    await Promise.all(rootConsoleStops);
+    // Give Proxmox/QEMU a short moment to release serial0 before the checker
+    // opens the same Unix socket.
+    if (disconnected) await new Promise((resolve) => setTimeout(resolve, 200));
+    return disconnected;
+  }
+
   closeOwner(token) {
     const owner = this.owners.get(token);
     if (!owner) return;

@@ -73,6 +73,16 @@ function beginRun() {
 
   queueMicrotask(async () => {
     try {
+      const disconnected = await consoleCenter.resetConnections();
+      publishRunEvent(run, {
+        type: "command",
+        completed: run.completed,
+        total: run.total,
+        command: "release serial consoles",
+        message: disconnected
+          ? `Перед проверкой отключено консольных подключений: ${disconnected}`
+          : "Serial-консоли свободны, активных подключений нет"
+      });
       const assessment = await applyLiveInfrastructure(snapshot(), {
         report(entry) {
           if (entry.kind === "result") run.completed = Math.min(run.total, run.completed + 1);
@@ -195,6 +205,7 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "GET" && url.pathname === "/api/assessment") {
+    await consoleCenter.resetConnections();
     return json(response, 200, await applyLiveInfrastructure(snapshot()));
   }
 
