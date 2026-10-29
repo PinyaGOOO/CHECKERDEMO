@@ -125,4 +125,38 @@ export class EcoRouterSerialAdapter {
   async getRunningConfig(vmid, credentials) {
     return this.runCommand(vmid, credentials, "show running-config", 2_500);
   }
+
+  async testCredentials(vmid, credentials) {
+    const socketPath = `${this.socketDirectory}/${vmid}.serial0`;
+    const socket = net.createConnection({ path: socketPath });
+    const chunks = [];
+    socket.on("data", (chunk) => chunks.push(chunk.toString("utf8")));
+    const connected = new Promise((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    const timer = setTimeout(() => socket.destroy(new Error("Serial login timeout")), this.timeout);
+    try {
+      await connected;
+      socket.write("q\x03\r\nend\r\n");
+      await delay(350);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const screen = cleanTerminalOutput(chunks.join(""));
+        if (/login:\s*$/i.test(screen)) break;
+        socket.write("exit\r\n");
+        await delay(350);
+      }
+      let screen = cleanTerminalOutput(chunks.join(""));
+      if (!/login:\s*$/i.test(screen)) return false;
+      socket.write(`${credentials.username}\r\n`);
+      await delay(300);
+      socket.write(`${credentials.password}\r\n`);
+      await delay(1_000);
+      screen = cleanTerminalOutput(chunks.join(""));
+      return !/Login incorrect/i.test(screen) && /(?:^|\n)[A-Za-z0-9_.()-]+[>#]\s*$/m.test(screen);
+    } finally {
+      clearTimeout(timer);
+      socket.destroy();
+    }
+  }
 }

@@ -8,7 +8,8 @@ import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
 import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
 import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
 import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../src/checks/ecorouter-routing.js";
-import { parseClientDhcp, parseDhcpServerConfig } from "../src/checks/dhcp-timezone.js";
+import { parseClientDhcp, parseDhcpServerConfig, parseResolvSearch } from "../src/checks/dhcp-timezone.js";
+import { parseEcoRouterUser } from "../src/checks/users.js";
 import { parseTcpdumpLine } from "../src/services/traffic-capture.js";
 
 test("assessment scores are internally consistent", () => {
@@ -255,6 +256,15 @@ IP4.DOMAIN[1]: au-team.irpo
     method: "auto", address: "192.168.200.10", prefix: 24, gateway: "192.168.200.1",
     dns: ["192.168.100.2"], domains: ["au-team.irpo"]
   });
+  assert.deepEqual(parseResolvSearch("nameserver 192.168.100.2\n---RESOLV---\nsearch au-team.irpo example.test\n"), ["au-team.irpo", "example.test"]);
+});
+
+test("EcoRouter user parser requires a password and admin role", () => {
+  assert.deepEqual(parseEcoRouterUser("username net_admin\n password encrypted-value\n role admin\n!\n", "net_admin"), {
+    passwordConfigured: true,
+    role: "admin"
+  });
+  assert.equal(parseEcoRouterUser("username admin\n role admin\n", "net_admin"), null);
 });
 
 test("tcpdump parser extracts real packet metadata and resolves VM MAC addresses", () => {

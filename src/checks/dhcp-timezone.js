@@ -102,6 +102,14 @@ export function parseClientDhcp(output) {
   return { method, address: address?.[1] || null, prefix: address ? Number(address[2]) : null, gateway, dns, domains };
 }
 
+export function parseResolvSearch(output) {
+  const resolv = output.split("---RESOLV---").at(-1) || "";
+  return resolv.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^\s*search\s+(.+?)\s*(?:#.*)?$/i);
+    return match ? match[1].split(/\s+/).map((domain) => domain.replace(/\.$/, "").toLowerCase()) : [];
+  });
+}
+
 function validateDhcp(routerConfig, routerBrief, serverAddresses, hqServerSocket, clientOutput) {
   const parsed = parseDhcpServerConfig(routerConfig);
   const routerInterfaces = parseEcoRouterInterfaces(routerBrief);
@@ -125,16 +133,14 @@ function validateDhcp(routerConfig, routerBrief, serverAddresses, hqServerSocket
     && !(gatewayValue >= poolStart && gatewayValue <= poolEnd));
   const optionsValid = Boolean(matched && matched.server.mask === 24
     && matched.server.gateway === matched.endpoint.address
-    && hqServerAddress && matched.server.dns === hqServerAddress.address
-    && matched.server.domain?.toLowerCase() === "au-team.irpo");
+    && hqServerAddress && matched.server.dns === hqServerAddress.address);
   const hqServerNotServingDhcp = !/LISTENING_UDP67=yes/.test(hqServerSocket);
   const client = parseClientDhcp(clientOutput);
   const clientValid = Boolean(matched && client.method === "auto" && client.address && client.prefix === 24
     && isPrivateIpv4(client.address) && sameSubnet(client.address, matched.endpoint.address, 24)
     && client.gateway === matched.endpoint.address
-    && hqServerAddress && client.dns.includes(hqServerAddress.address)
-    && client.domains.some((domain) => domain.replace(/\.$/, "").toLowerCase() === "au-team.irpo"));
-  return { matched, hqServerAddress, poolValid, optionsValid, hqServerNotServingDhcp, client, clientValid };
+    && hqServerAddress && client.dns.includes(hqServerAddress.address));
+  return { matched, hqServerAddress, poolValid, optionsValid, hqServerNotServingDhcp, client, clientValid, resolvSearch: parseResolvSearch(clientOutput) };
 }
 
 async function collectLinuxTimezone(vmid, adapter, report) {
@@ -213,7 +219,7 @@ export async function applyDhcpAndTimezoneChecks(assessment, adapter, serial, re
       })(),
       adapter.guestCommand(104, "network-get-interfaces"),
       adapter.guestExec(104, "/bin/sh", ["-lc", "if ss -H -lun 2>/dev/null | grep -Eq '(^|[[:space:]])[^[:space:]]*:67[[:space:]]'; then echo LISTENING_UDP67=yes; else echo LISTENING_UDP67=no; fi"]),
-      adapter.guestExec(106, "/bin/sh", ["-lc", "uuid=$(nmcli -t -f UUID,DEVICE connection show --active 2>/dev/null | awk -F: '$2 != \"lo\" {print $1; exit}'); printf 'METHOD='; nmcli -g ipv4.method connection show \"$uuid\" 2>/dev/null; nmcli device show ens19 2>/dev/null"])
+      adapter.guestExec(106, "/bin/sh", ["-lc", "uuid=$(nmcli -t -f UUID,DEVICE connection show --active 2>/dev/null | awk -F: '$2 != \"lo\" {print $1; exit}'); printf 'METHOD='; nmcli -g ipv4.method connection show \"$uuid\" 2>/dev/null; nmcli device show ens19 2>/dev/null; echo ---RESOLV---; cat /etc/resolv.conf 2>/dev/null"])
     ]);
     dhcpData = validateDhcp(hqRouter.config, brief, ipv4Addresses(serverInterfaces), outputOf(hqServerSocket), outputOf(clientOutput));
   } catch (error) {
@@ -225,7 +231,7 @@ export async function applyDhcpAndTimezoneChecks(assessment, adapter, serial, re
     title: "DHCP-сервер VLAN 200 на HQ-RTR",
     maxScore: 4,
     method: "EcoRouter CLI + QEMU Guest Agent",
-    expected: "pool /24 · исключён адрес HQ-RTR · gateway=HQ-RTR · DNS=HQ-SRV · domain=au-team.irpo"
+    expected: "pool /24 · исключён адрес HQ-RTR · gateway=HQ-RTR · DNS=HQ-SRV"
   });
   if (dhcpError) setResult(serverCheck, "unknown", `Данные недоступны · ${dhcpError}`, duration());
   else {
@@ -240,7 +246,7 @@ export async function applyDhcpAndTimezoneChecks(assessment, adapter, serial, re
     title: "Получение параметров по DHCP",
     maxScore: 4,
     method: "QEMU Guest Agent + конфигурация HQ-RTR",
-    expected: "ipv4.method=auto · адрес /24 · gateway=HQ-RTR · DNS=HQ-SRV · au-team.irpo"
+    expected: "ipv4.method=auto · адрес /24 · gateway=HQ-RTR · DNS=HQ-SRV"
   });
   if (dhcpError) setResult(clientCheck, "unknown", `Данные недоступны · ${dhcpError}`, duration());
   else {
@@ -249,5 +255,18 @@ export async function applyDhcpAndTimezoneChecks(assessment, adapter, serial, re
       `method=${dhcpData.client.method || "не найден"} · адрес=${dhcpData.client.address ? `${dhcpData.client.address}/${dhcpData.client.prefix}` : "нет"} · gateway=${dhcpData.client.gateway || "нет"} · DNS=${dhcpData.client.dns.join(",") || "нет"} · domain=${dhcpData.client.domains.join(",") || "нет"} · сервер HQ-RTR=${serverCheck.status === "pass" ? "подтверждён" : "не подтверждён"}`, duration());
   }
   reportResult(report, cliDevice, clientCheck);
+
+  const searchCheck = upsertCheck(cliDevice, "cli-domain-search", {
+    title: "DNS search domain",
+    maxScore: 1,
+    method: "QEMU Guest Agent · /etc/resolv.conf",
+    expected: "search au-team.irpo"
+  });
+  if (dhcpError) setResult(searchCheck, "unknown", `Данные недоступны · ${dhcpError}`, duration());
+  else {
+    const valid = dhcpData.resolvSearch.includes("au-team.irpo");
+    setResult(searchCheck, valid ? "pass" : "fail", `/etc/resolv.conf: search=${dhcpData.resolvSearch.join(", ") || "не задан"}`, duration());
+  }
+  reportResult(report, cliDevice, searchCheck);
 }
 
