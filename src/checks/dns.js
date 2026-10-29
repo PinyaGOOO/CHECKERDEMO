@@ -15,7 +15,7 @@ function outputOf(result) {
 }
 
 function errorSummary(error) {
-  return String(error.stderr || error.message || error).trim().split(/\r?\n/)[0];
+  return String(error.stderr || error.message || error).trim().split(/\r?\n/)[0].slice(0, 300);
 }
 
 function upsertCheck(device, id, values) {
@@ -70,13 +70,21 @@ export function parseHostQueries(output) {
 
 function buildQueryScript(expected, dnsServer = null) {
   const serverArgument = dnsServer ? ` ${dnsServer}` : "";
-  const lines = ["command -v host >/dev/null 2>&1 || { echo TOOL_MISSING; exit 0; }"];
+  const lines = [
+    "command -v host >/dev/null 2>&1 || { echo TOOL_MISSING; exit 0; }",
+    "tmp=$(mktemp -d /tmp/web-demo-dns.XXXXXX) || exit 1",
+    "i=0"
+  ];
+  const query = (header, command) => {
+    lines.push(`i=$((i+1)); (echo '${header}'; ${command} 2>&1 || true; echo END) > \"$tmp/$(printf '%03d' $i)\" &`);
+  };
   for (const name of names) {
-    lines.push(`echo 'BEGIN_A|${name}'`, `host -W 2 -t A '${name}'${serverArgument} 2>&1 || true`, "echo END");
+    query(`BEGIN_A|${name}`, `host -W 2 -t A '${name}'${serverArgument}`);
   }
   for (const address of expected.ptr.keys()) {
-    lines.push(`echo 'BEGIN_PTR|${address}'`, `host -W 2 '${address}'${serverArgument} 2>&1 || true`, "echo END");
+    query(`BEGIN_PTR|${address}`, `host -W 2 '${address}'${serverArgument}`);
   }
+  lines.push("wait", "for file in \"$tmp\"/*; do cat \"$file\"; done", "case \"$tmp\" in /tmp/web-demo-dns.*) rm -rf -- \"$tmp\";; esac");
   return lines.join("; ");
 }
 
