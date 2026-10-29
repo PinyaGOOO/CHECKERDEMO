@@ -11,6 +11,7 @@ import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../sr
 import { parseClientDhcp, parseDhcpServerConfig, parseResolvSearch } from "../src/checks/dhcp-timezone.js";
 import { parseEcoRouterUser } from "../src/checks/users.js";
 import { parseSshAssessment } from "../src/checks/ssh.js";
+import { parseHostQueries } from "../src/checks/dns.js";
 import { parseTcpdumpLine } from "../src/services/traffic-capture.js";
 
 test("assessment scores are internally consistent", () => {
@@ -286,6 +287,19 @@ Authorized access only
   assert.equal(state.maxAuthTries, 2);
   assert.equal(state.active && state.listens2026 && !state.listens22, true);
   assert.equal(state.banner, "Authorized access only");
+});
+
+test("DNS host parser extracts A and PTR answers", () => {
+  const records = parseHostQueries(`BEGIN_A|hq-srv.au-team.irpo
+hq-srv.au-team.irpo has address 192.168.100.2
+END
+BEGIN_PTR|192.168.100.2
+2.100.168.192.in-addr.arpa domain name pointer hq-srv.au-team.irpo.
+END
+`);
+  assert.deepEqual(records.a.get("hq-srv.au-team.irpo"), ["192.168.100.2"]);
+  assert.deepEqual(records.ptr.get("192.168.100.2"), ["hq-srv.au-team.irpo"]);
+  assert.equal(records.toolMissing, false);
 });
 
 test("tcpdump parser extracts real packet metadata and resolves VM MAC addresses", () => {

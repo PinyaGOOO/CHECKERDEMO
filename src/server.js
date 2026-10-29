@@ -21,7 +21,7 @@ const vendorFiles = new Map([
 const port = Number(process.env.PORT || 8007);
 const consolePort = Number(process.env.CONSOLE_HTTPS_PORT || 8443);
 const runs = new Map();
-const assessmentCheckTotal = 47;
+const assessmentCheckTotal = 49;
 
 const types = {
   ".html": "text/html; charset=utf-8",
