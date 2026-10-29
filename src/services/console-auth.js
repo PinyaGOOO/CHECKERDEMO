@@ -22,7 +22,10 @@ function allowAttempt(request) {
 export function verifyRootPassword(password) {
   if (typeof password !== "string" || password.length < 1 || password.length > 256) return Promise.resolve(false);
   return new Promise((resolve) => {
-    const child = spawn("/bin/pamtester", ["login", "root", "authenticate"], {
+    // The `login` PAM stack begins with pam_securetty and always rejects this
+    // HTTPS session because it has no system TTY. system-auth validates the
+    // same local root password without applying an interactive-login policy.
+    const child = spawn("/bin/pamtester", ["system-auth", "root", "authenticate"], {
       stdio: ["pipe", "ignore", "ignore"],
       timeout: 10_000
     });
