@@ -1,156 +1,147 @@
-const scenarios = {
-  "hq-internet": {
-    protocol: "HTTP",
-    description: "HTTP-запрос от HQ-CLI через HQ-RTR и динамический NAT на ISP.",
-    path: ["hqcli", "hqrtr", "isp", "internet", "isp", "hqrtr", "hqcli"]
-  },
-  "hq-dns": {
-    protocol: "DNS",
-    description: "DNS-запрос проходит между VLAN 200 и VLAN 100 через HQ-RTR.",
-    path: ["hqcli", "hqrtr", "hqsrv", "hqrtr", "hqcli"]
-  },
-  "br-internet": {
-    protocol: "HTTP",
-    description: "Трафик BR-SRV проходит через BR-RTR и NAT на ISP.",
-    path: ["brsrv", "brrtr", "isp", "internet", "isp", "brrtr", "brsrv"]
-  },
-  "hq-isp": {
-    protocol: "ICMP",
-    description: "Эхо-запрос проверяет WAN-связь между HQ-RTR и ISP.",
-    path: ["hqrtr", "isp", "hqrtr"]
-  }
-};
-
-const nodeLabels = { internet:"Интернет", isp:"ISP", hqrtr:"HQ-RTR", brrtr:"BR-RTR", hqsrv:"HQ-SRV", hqcli:"HQ-CLI", brfw:"BR-FW", brsrv:"BR-SRV" };
 const positions = { internet:[600,73], isp:[600,205], hqrtr:[350,335], brrtr:[850,335], hqsrv:[235,540], hqcli:[465,540], brfw:[735,540], brsrv:[965,540] };
-const state = { running:false, speed:1, packets:[], lastSpawn:0, count:0, animationId:null };
-const svg = document.querySelector("#topology");
+const labels = { internet:"Интернет", isp:"ISP", hqrtr:"HQ-RTR", brrtr:"BR-RTR", hqsrv:"HQ-SRV", hqcli:"HQ-CLI", brfw:"BR-FW", brsrv:"BR-SRV" };
+const vmNodes = new Map([[100,"isp"],[101,"hqrtr"],[102,"brrtr"],[103,"brfw"],[104,"hqsrv"],[105,"brsrv"],[106,"hqcli"]]);
+const bridgeMembers = {
+  vmbr0:["isp","internet"], ISP_HQ:["isp","hqrtr"], ISP_BR:["isp","brrtr"],
+  HQ_NET:["hqrtr","hqsrv","hqcli"], FW_NET:["brrtr","brfw"], BR_NET:["brfw","brsrv"]
+};
+const bridgeLinks = {
+  vmbr0:["internet-isp"], ISP_HQ:["isp-hqrtr"], ISP_BR:["isp-brrtr"],
+  HQ_NET:["hqrtr-hqsrv","hqrtr-hqcli"], FW_NET:["brrtr-brfw"], BR_NET:["brrtr-brsrv"]
+};
+const state = { stream:null, running:false, count:0, packets:[], animationId:null };
 const packetLayer = document.querySelector("#packet-layer");
 const toggleButton = document.querySelector("#toggle-button");
-const scenarioSelect = document.querySelector("#scenario-select");
+const badge = document.querySelector("#capture-badge");
 
-function selectedScenario() { return scenarios[scenarioSelect.value]; }
-
-function updateScenario() {
-  document.querySelector("#scenario-description").textContent = selectedScenario().description;
-  resetSimulation();
+function protocolClass(protocol) {
+  return ({ TCP:"tcp", UDP:"udp", ICMP:"icmp", ARP:"arp", IPv6:"ipv6" })[protocol] || "ipv4";
 }
 
-function activeLinks(path) {
-  const pairs = new Set(path.slice(1).map((node, index) => [path[index], node].sort().join("-")));
-  document.querySelectorAll("[data-link]").forEach((link) => {
-    const normalized = link.dataset.link.split("-").sort().join("-");
-    link.classList.toggle("active", pairs.has(normalized));
+function filtered(packet) {
+  const selected = document.querySelector("#protocol-select").value;
+  return selected !== "ALL" && packet.protocol !== selected;
+}
+
+function setCaptureState(status, detail) {
+  state.running = status === "running";
+  badge.textContent = status === "running" ? "Live capture" : status === "starting" ? "Подключение…" : "Захват остановлен";
+  badge.classList.toggle("live", status === "running");
+  toggleButton.textContent = state.running || status === "starting" ? "■ Остановить захват" : "▶ Начать захват";
+  document.querySelector("#current-step").textContent = detail || (state.running ? "Ожидаем пакеты…" : "Захват остановлен");
+}
+
+function nodeForDevice(device) {
+  return device ? vmNodes.get(device.vmid) || null : null;
+}
+
+function packetRoutes(packet) {
+  const members = bridgeMembers[packet.bridge] || [];
+  const source = nodeForDevice(packet.srcDevice);
+  const destination = nodeForDevice(packet.dstDevice);
+  if (source && destination && source !== destination) return [[source, destination]];
+  if (source) return members.filter((node) => node !== source).map((node) => [source, node]);
+  if (destination) return members.filter((node) => node !== destination).map((node) => [node, destination]);
+  return members.length >= 2 ? [[members[0], members[1]]] : [];
+}
+
+function highlightBridge(bridge) {
+  const ids = new Set(bridgeLinks[bridge] || []);
+  document.querySelectorAll("[data-link]").forEach((link) => link.classList.toggle("active", ids.has(link.dataset.link)));
+  clearTimeout(highlightBridge.timer);
+  highlightBridge.timer = setTimeout(() => document.querySelectorAll("[data-link]").forEach((link) => link.classList.remove("active")), 360);
+}
+
+function spawnVisualPacket(from, to, protocol) {
+  if (!positions[from] || !positions[to]) return;
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  circle.setAttribute("r", "7");
+  circle.classList.add("packet", protocolClass(protocol));
+  packetLayer.append(circle);
+  state.packets.push({ circle, from:positions[from], to:positions[to], startedAt:performance.now(), duration:650 });
+  if (!state.animationId) state.animationId = requestAnimationFrame(animatePackets);
+}
+
+function animatePackets(now) {
+  state.packets = state.packets.filter((packet) => {
+    const progress = Math.min(1, (now - packet.startedAt) / packet.duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    packet.circle.setAttribute("cx", String(packet.from[0] + (packet.to[0] - packet.from[0]) * eased));
+    packet.circle.setAttribute("cy", String(packet.from[1] + (packet.to[1] - packet.from[1]) * eased));
+    if (progress >= 1) packet.circle.remove();
+    return progress < 1;
   });
+  state.animationId = state.packets.length ? requestAnimationFrame(animatePackets) : null;
 }
 
-function appendLog(from, to, protocol, response) {
+function endpoint(ip, port, device, fallback) {
+  const address = ip ? `${ip}${port ? `:${port}` : ""}` : device?.name || fallback;
+  return device ? `${device.name} · ${address}` : address;
+}
+
+function appendLog(packet) {
   const entry = document.createElement("div");
   entry.className = "log-entry";
   const title = document.createElement("strong");
-  title.textContent = `${nodeLabels[from]} → ${nodeLabels[to]}`;
+  title.textContent = `${endpoint(packet.srcIp, packet.srcPort, packet.srcDevice, packet.srcMac)} → ${endpoint(packet.dstIp, packet.dstPort, packet.dstDevice, packet.dstMac)}`;
   const detail = document.createElement("small");
-  detail.textContent = `${protocol} · ${response ? "ответ" : "запрос"}`;
+  detail.textContent = `${packet.protocol} · ${packet.bridge} · ${packet.length || "?"} байт`;
   entry.append(title, detail);
   const log = document.querySelector("#event-log");
   log.prepend(entry);
-  while (log.children.length > 8) log.lastElementChild.remove();
+  while (log.children.length > 30) log.lastElementChild.remove();
 }
 
-function spawnPacket(now) {
-  const scenario = selectedScenario();
-  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  circle.setAttribute("r", "7");
-  circle.classList.add("packet", "request");
-  packetLayer.append(circle);
-  state.packets.push({ circle, path:scenario.path, protocol:scenario.protocol, segment:0, progress:0, lastTime:now });
+function handlePacket(packet) {
+  if (filtered(packet)) return;
   state.count += 1;
   document.querySelector("#packet-count").textContent = `${state.count} пакетов`;
+  const routes = packetRoutes(packet);
+  routes.forEach(([from, to]) => spawnVisualPacket(from, to, packet.protocol));
+  highlightBridge(packet.bridge);
+  appendLog(packet);
+  const routeText = routes[0] ? `${labels[routes[0][0]]} → ${labels[routes[0][1]]}` : packet.bridge;
+  document.querySelector("#current-step").textContent = `${routeText} · ${packet.protocol} · ${packet.length || "?"} байт`;
 }
 
-function updatePacket(packet, now) {
-  const elapsed = Math.min(100, now - packet.lastTime);
-  packet.lastTime = now;
-  packet.progress += elapsed * 0.00055 * state.speed;
-  while (packet.progress >= 1 && packet.segment < packet.path.length - 1) {
-    packet.progress -= 1;
-    const from = packet.path[packet.segment];
-    packet.segment += 1;
-    const to = packet.path[packet.segment];
-    const response = packet.segment >= Math.ceil((packet.path.length - 1) / 2);
-    appendLog(from, to, packet.protocol, response);
-    packet.circle.classList.toggle("request", !response);
-    packet.circle.classList.toggle("response", response);
-    document.querySelector("#current-step").textContent = `${nodeLabels[from]} → ${nodeLabels[to]} · ${packet.protocol}`;
-    document.querySelectorAll(".node").forEach((node) => node.classList.toggle("active", node.dataset.node === to));
-  }
-  if (packet.segment >= packet.path.length - 1) return false;
-  const start = positions[packet.path[packet.segment]];
-  const end = positions[packet.path[packet.segment + 1]];
-  const eased = packet.progress * packet.progress * (3 - 2 * packet.progress);
-  packet.circle.setAttribute("cx", String(start[0] + (end[0] - start[0]) * eased));
-  packet.circle.setAttribute("cy", String(start[1] + (end[1] - start[1]) * eased));
-  return true;
+function startCapture() {
+  if (state.stream) return;
+  setCaptureState("starting", "Подключаемся к tcpdump на Proxmox…");
+  const stream = new EventSource("/api/traffic/events");
+  state.stream = stream;
+  stream.onmessage = ({ data }) => {
+    const event = JSON.parse(data);
+    if (event.type === "capture-status") setCaptureState(event.status);
+    else if (event.type === "packet") handlePacket(event);
+    else if (event.type === "capture-error") stopCapture(`Ошибка захвата: ${event.message}`);
+  };
+  stream.onerror = () => stopCapture("Соединение с потоком пакетов потеряно");
 }
 
-function frame(now) {
-  if (!state.running) return;
-  if (!state.lastSpawn || now - state.lastSpawn > 1900 / state.speed) {
-    spawnPacket(now);
-    state.lastSpawn = now;
-  }
-  state.packets = state.packets.filter((packet) => {
-    const alive = updatePacket(packet, now);
-    if (!alive) packet.circle.remove();
-    return alive;
-  });
-  state.animationId = requestAnimationFrame(frame);
+function stopCapture(message = "Захват остановлен") {
+  state.stream?.close();
+  state.stream = null;
+  setCaptureState("stopped", message);
 }
 
-function setRunning(running) {
-  state.running = running;
-  toggleButton.textContent = running ? "Ⅱ Пауза" : "▶ Запустить";
-  if (running) {
-    const now = performance.now();
-    state.packets.forEach((packet) => { packet.lastTime = now; });
-    state.lastSpawn = 0;
-    activeLinks(selectedScenario().path);
-    state.animationId = requestAnimationFrame(frame);
-  } else {
-    cancelAnimationFrame(state.animationId);
-    document.querySelector("#current-step").textContent = state.packets.length ? "Симуляция приостановлена" : "Симуляция остановлена";
-  }
-}
-
-function resetSimulation() {
-  setRunning(false);
-  state.packets.forEach((packet) => packet.circle.remove());
-  state.packets = [];
+function clearScreen() {
   state.count = 0;
-  state.lastSpawn = 0;
   document.querySelector("#packet-count").textContent = "0 пакетов";
   document.querySelector("#event-log").innerHTML = "";
-  document.querySelector("#current-step").textContent = "Симуляция остановлена";
-  document.querySelectorAll(".node").forEach((node) => node.classList.remove("active"));
-  activeLinks(selectedScenario().path);
+  state.packets.forEach((packet) => packet.circle.remove());
+  state.packets = [];
 }
 
 async function loadVmStates() {
   try {
     const infrastructure = await fetch("/api/infrastructure").then((response) => response.json());
-    const statusByVmid = new Map(infrastructure.vms.map((vm) => [String(vm.vmid), vm.status]));
-    document.querySelectorAll("[data-vmid]").forEach((node) => node.classList.toggle("offline", statusByVmid.get(node.dataset.vmid) !== "running"));
-  } catch { /* The simulation remains usable without live inventory. */ }
+    const statuses = new Map(infrastructure.vms.map((vm) => [String(vm.vmid), vm.status]));
+    document.querySelectorAll("[data-vmid]").forEach((node) => node.classList.toggle("offline", statuses.get(node.dataset.vmid) !== "running"));
+  } catch { /* Capture can still work without inventory decoration. */ }
 }
 
-toggleButton.addEventListener("click", () => setRunning(!state.running));
-document.querySelector("#reset-button").addEventListener("click", resetSimulation);
-scenarioSelect.addEventListener("change", updateScenario);
-document.querySelector("#speed-input").addEventListener("input", (event) => {
-  state.speed = Number(event.target.value);
-  document.querySelector("#speed-value").textContent = `${state.speed}×`;
-});
-document.addEventListener("visibilitychange", () => { if (document.hidden && state.running) setRunning(false); });
-
-activeLinks(selectedScenario().path);
+toggleButton.addEventListener("click", () => state.stream ? stopCapture() : startCapture());
+document.querySelector("#clear-button").addEventListener("click", clearScreen);
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopCapture("Захват остановлен в фоновой вкладке"); });
+window.addEventListener("beforeunload", () => state.stream?.close());
 loadVmStates();

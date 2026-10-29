@@ -22,27 +22,26 @@
         <div>
           <span class="eyebrow">НАВИГАТОР ПАКЕТОВ</span>
           <h1>Симуляция сети</h1>
-          <p>Выберите сценарий и проследите путь запроса и ответа между устройствами.</p>
+          <p>Пакеты появляются здесь только тогда, когда tcpdump действительно видит их на мостах Proxmox.</p>
         </div>
-        <span class="simulation-badge">Учебная модель</span>
+        <span id="capture-badge" class="simulation-badge">Захват остановлен</span>
       </section>
 
       <section class="sim-controls" aria-label="Управление симуляцией">
         <label>
-          <span>Сценарий</span>
-          <select id="scenario-select">
-            <option value="hq-internet">HQ-CLI → Интернет · HTTP</option>
-            <option value="hq-dns">HQ-CLI → HQ-SRV · DNS</option>
-            <option value="br-internet">BR-SRV → Интернет · HTTP</option>
-            <option value="hq-isp">HQ-RTR → ISP · ICMP</option>
+          <span>Фильтр протокола</span>
+          <select id="protocol-select">
+            <option value="ALL">Все протоколы</option>
+            <option value="TCP">TCP</option>
+            <option value="UDP">UDP</option>
+            <option value="ICMP">ICMP</option>
+            <option value="ARP">ARP</option>
+            <option value="IPv4">Другой IPv4</option>
+            <option value="IPv6">IPv6</option>
           </select>
         </label>
-        <label class="speed-control">
-          <span>Скорость <strong id="speed-value">1×</strong></span>
-          <input id="speed-input" type="range" min="0.5" max="2" value="1" step="0.5" />
-        </label>
-        <button id="toggle-button" class="primary-button" type="button">▶ Запустить</button>
-        <button id="reset-button" class="secondary-button" type="button">Сбросить</button>
+        <button id="toggle-button" class="primary-button" type="button">▶ Начать захват</button>
+        <button id="clear-button" class="secondary-button" type="button">Очистить экран</button>
       </section>
 
       <section class="sim-workspace">
@@ -126,14 +125,14 @@
         <aside class="sim-sidebar">
           <div class="scenario-state" aria-live="polite">
             <span>Текущий этап</span>
-            <strong id="current-step">Симуляция остановлена</strong>
-            <small id="scenario-description">HTTP-запрос от HQ-CLI через HQ-RTR и NAT на ISP.</small>
+            <strong id="current-step">Ожидание запуска</strong>
+            <small id="scenario-description">Передаются только заголовки пакетов: MAC, IP, порты, протокол и размер. Содержимое не читается.</small>
           </div>
           <div class="packet-legend">
-            <span><i class="request-dot"></i>Запрос</span>
-            <span><i class="response-dot"></i>Ответ</span>
+            <span><i class="request-dot"></i>TCP / IPv4</span>
+            <span><i class="response-dot"></i>UDP / ICMP / ARP</span>
           </div>
-          <div class="event-log-heading"><span>Журнал</span><strong id="packet-count">0 пакетов</strong></div>
+          <div class="event-log-heading"><span>Реальные пакеты</span><strong id="packet-count">0 пакетов</strong></div>
           <div id="event-log" class="event-log" role="log"></div>
         </aside>
       </section>

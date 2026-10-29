@@ -7,6 +7,7 @@ import { applyHostnameChecks, recalculateDeviceScores } from "../src/checks/host
 import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
 import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
 import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
+import { parseTcpdumpLine } from "../src/services/traffic-capture.js";
 
 test("assessment scores are internally consistent", () => {
   const data = snapshot();
@@ -181,4 +182,17 @@ port te1
   assert.equal(te0BindingValid(config, "uplink"), true);
   assert.equal(te0BindingValid(config.replace("encapsulation untagged", "encapsulation dot1q 100"), "uplink"), false);
   assert.equal(te0BindingValid(config, "wrong-interface"), false);
+});
+
+test("tcpdump parser extracts real packet metadata and resolves VM MAC addresses", () => {
+  const macMap = new Map([["bc:24:11:c1:a4:7a", { vmid: 106, name: "HQ-CLI" }]]);
+  const line = "1793200000.125000 bc:24:11:c1:a4:7a > bc:24:11:49:8c:9c, ethertype IPv4 (0x0800), length 74: 192.168.10.2.54321 > 8.8.8.8.443: tcp 0";
+  const packet = parseTcpdumpLine(line, "HQ_NET", macMap);
+  assert.equal(packet.bridge, "HQ_NET");
+  assert.equal(packet.protocol, "TCP");
+  assert.equal(packet.srcDevice.vmid, 106);
+  assert.equal(packet.srcIp, "192.168.10.2");
+  assert.equal(packet.dstIp, "8.8.8.8");
+  assert.equal(packet.dstPort, 443);
+  assert.equal(packet.length, 74);
 });

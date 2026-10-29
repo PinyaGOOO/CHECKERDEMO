@@ -4,6 +4,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { snapshot } from "./data/assessment.js";
 import { applyLiveInfrastructure, getInfrastructure, resetInfrastructureCache } from "./services/infrastructure.js";
+import { trafficCapture } from "./services/traffic-capture.js";
 
 const root = fileURLToPath(new URL("../public/", import.meta.url));
 const port = Number(process.env.PORT || 8007);
@@ -112,6 +113,18 @@ const server = http.createServer(async (request, response) => {
     } catch (error) {
       return json(response, 502, { error: "Proxmox inventory unavailable", message: error.message });
     }
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/traffic/events") {
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive"
+    });
+    response.write(": connected\n\n");
+    await trafficCapture.addClient(response);
+    request.on("close", () => trafficCapture.removeClient(response));
+    return;
   }
 
   if (request.method === "POST" && url.pathname === "/api/runs") {
