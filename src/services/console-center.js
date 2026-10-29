@@ -99,8 +99,8 @@ class ConsoleCenter {
         socket.write(`${credentials.password}\r\n`);
       }
       if (/[#>]\s*$/.test(device.buffer)) device.resetting = false;
-      this.escalateLinuxRoot(device, credentials);
       this.applyTerminalSize(owner, vmid, device);
+      this.escalateLinuxRoot(device);
     });
     socket.on("error", (error) => {
       this.publish(token, { type: "status", vmid, status: "error", message: error.message });
@@ -114,26 +114,16 @@ class ConsoleCenter {
     });
   }
 
-  escalateLinuxRoot(device, credentials) {
+  escalateLinuxRoot(device) {
     if (device.rootEscalation === "none" || device.rootEscalation === "root" || device.rootEscalation === "failed") return;
     if (device.rootEscalation === "pending" && /#\s*$/.test(device.buffer)) {
       device.rootEscalation = "root";
       return;
     }
     if (device.rootEscalation === "pending" && /\$\s*$/.test(device.buffer)) {
-      device.rootEscalation = "password";
-      device.buffer = "";
-      device.socket.write("sudo -S -p '[checker-sudo]' -i\r\n");
-      return;
-    }
-    if (device.rootEscalation === "password" && device.buffer.includes("[checker-sudo]")) {
       device.rootEscalation = "verifying";
       device.buffer = "";
-      device.socket.write(`${credentials.password}\r\n`);
-      return;
-    }
-    if (device.rootEscalation === "password" && /#\s*$/.test(device.buffer)) {
-      device.rootEscalation = "root";
+      device.socket.write("sudo -i\r\n");
       return;
     }
     if (device.rootEscalation === "verifying" && /#\s*$/.test(device.buffer)) {
@@ -145,7 +135,7 @@ class ConsoleCenter {
   }
 
   applyTerminalSize(owner, vmid, device) {
-    if (!linuxSerialVmids.has(vmid) || device.sttyApplied || !["root", "failed"].includes(device.rootEscalation) || !/[$#]\s*$/.test(device.buffer)) return;
+    if (!linuxSerialVmids.has(vmid) || device.sttyApplied || !/[$#]\s*$/.test(device.buffer)) return;
     const size = owner.sizes.get(vmid);
     if (!size) return;
     device.sttyApplied = true;
