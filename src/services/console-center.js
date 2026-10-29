@@ -1,4 +1,5 @@
 import net from "node:net";
+import { StringDecoder } from "node:string_decoder";
 import { ProxmoxSshAdapter } from "../adapters/proxmox-ssh.js";
 import { cleanTerminalOutput } from "../adapters/ecorouter-serial.js";
 
@@ -62,14 +63,27 @@ class ConsoleCenter {
       throw error;
     }
     const socket = net.createConnection({ path: `/var/run/qemu-server/${vmid}.serial0` });
-    const device = { type: "serial", socket, buffer: "", sentUser: false, sentPassword: false, resetting: true, sttyApplied: false };
+    const device = {
+      type: "serial",
+      socket,
+      decoder: new StringDecoder("utf8"),
+      buffer: "",
+      sentUser: false,
+      sentPassword: false,
+      resetting: true,
+      sttyApplied: false,
+      rootEscalation: linuxSerialVmids.has(vmid) ? "pending" : "none"
+    };
     owner.devices.set(vmid, device);
     socket.on("connect", () => {
       this.publish(token, { type: "status", vmid, status: "connected", channel: "serial0" });
       socket.write("\x03\r\n");
     });
     socket.on("data", (chunk) => {
-      const output = chunk.toString("utf8");
+      // Serial data can split a UTF-8 character between chunks. StringDecoder
+      // retains incomplete bytes so localized full-screen apps (notably nano)
+      // do not render replacement characters in their status/help rows.
+      const output = device.decoder.write(chunk);
       const plainOutput = cleanTerminalOutput(output);
       device.buffer = `${device.buffer}${plainOutput}`.slice(-600);
       this.publish(token, { type: "output", vmid, data: output });
@@ -85,6 +99,7 @@ class ConsoleCenter {
         socket.write(`${credentials.password}\r\n`);
       }
       if (/[#>]\s*$/.test(device.buffer)) device.resetting = false;
+      this.escalateLinuxRoot(device, credentials);
       this.applyTerminalSize(owner, vmid, device);
     });
     socket.on("error", (error) => {
@@ -99,8 +114,38 @@ class ConsoleCenter {
     });
   }
 
+  escalateLinuxRoot(device, credentials) {
+    if (device.rootEscalation === "none" || device.rootEscalation === "root" || device.rootEscalation === "failed") return;
+    if (device.rootEscalation === "pending" && /#\s*$/.test(device.buffer)) {
+      device.rootEscalation = "root";
+      return;
+    }
+    if (device.rootEscalation === "pending" && /\$\s*$/.test(device.buffer)) {
+      device.rootEscalation = "password";
+      device.buffer = "";
+      device.socket.write("sudo -S -p '[checker-sudo]' -i\r\n");
+      return;
+    }
+    if (device.rootEscalation === "password" && device.buffer.includes("[checker-sudo]")) {
+      device.rootEscalation = "verifying";
+      device.buffer = "";
+      device.socket.write(`${credentials.password}\r\n`);
+      return;
+    }
+    if (device.rootEscalation === "password" && /#\s*$/.test(device.buffer)) {
+      device.rootEscalation = "root";
+      return;
+    }
+    if (device.rootEscalation === "verifying" && /#\s*$/.test(device.buffer)) {
+      device.rootEscalation = "root";
+    } else if (device.rootEscalation === "verifying" && /\$\s*$/.test(device.buffer)) {
+      device.rootEscalation = "failed";
+      device.socket.write("printf '\\r\\n[checker] Не удалось перейти в root\\r\\n'\r\n");
+    }
+  }
+
   applyTerminalSize(owner, vmid, device) {
-    if (!linuxSerialVmids.has(vmid) || device.sttyApplied || !/[$#]\s*$/.test(device.buffer)) return;
+    if (!linuxSerialVmids.has(vmid) || device.sttyApplied || !["root", "failed"].includes(device.rootEscalation) || !/[$#]\s*$/.test(device.buffer)) return;
     const size = owner.sizes.get(vmid);
     if (!size) return;
     device.sttyApplied = true;
