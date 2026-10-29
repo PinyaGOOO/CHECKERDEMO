@@ -139,7 +139,7 @@ class ConsoleCenter {
     const size = owner.sizes.get(vmid);
     if (!size) return;
     device.sttyApplied = true;
-    device.socket.write(`stty rows ${size.rows} cols ${size.cols}; export TERM=xterm-256color\r\n`);
+    device.socket.write(`stty rows ${size.rows} cols ${size.cols} -ixon -ixoff; export TERM=xterm-256color\r\n`);
   }
 
   resize(token, vmid, cols, rows) {
@@ -168,6 +168,14 @@ class ConsoleCenter {
     } catch (error) {
       this.publish(token, { type: "output", vmid, data: `Ошибка QGA: ${error.message}\r\n# ` });
     }
+  }
+
+  interrupt(token, vmid) {
+    if (!allowedVmids.has(vmid)) throw new Error("Unsupported VMID");
+    const device = this.owner(token).devices.get(vmid);
+    if (!device) throw new Error("Console is not connected");
+    if (device.type !== "serial") throw new Error("Ctrl+C доступен только в serial-консолях");
+    device.socket.write("\u0003");
   }
 
   async disconnect(token, vmid) {

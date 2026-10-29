@@ -39,7 +39,7 @@ function createTerminal(device, host) {
     event.stopImmediatePropagation();
     if (!state.connected.has(device.vmid)) return;
     if (device.qga) handleQgaInput(device.vmid, "\u0003");
-    else queueRawInput(device.vmid, "\u0003");
+    else sendInterrupt(device.vmid);
   }, true);
   let resizeFrame = null;
   new ResizeObserver(() => {
@@ -77,19 +77,38 @@ function writeAndFollow(terminal, data) {
 }
 function appendOutput(vmid, data) { writeAndFollow(terminalFor(vmid), data); }
 
+async function flushRawInput(vmid) {
+  const queue = state.rawQueues.get(vmid);
+  if (!queue || queue.sending) return;
+  clearTimeout(queue.timer);
+  queue.timer = null;
+  queue.sending = true;
+  try {
+    while (queue.data) {
+      const payload = queue.data;
+      queue.data = "";
+      await api(`/api/console/${vmid}/input`, { raw:true, data:payload });
+    }
+  } catch (error) {
+    appendOutput(vmid, `\r\n\x1b[31mОшибка ввода: ${error.message}\x1b[0m\r\n`);
+  } finally {
+    queue.sending = false;
+    if (queue.data) queue.timer = setTimeout(() => flushRawInput(vmid), 0);
+  }
+}
+
 function queueRawInput(vmid, data) {
   if (!state.connected.has(vmid)) return;
   if (data.includes("\r") || data.includes("\n")) terminalFor(vmid)?.scrollToBottom();
-  const queue = state.rawQueues.get(vmid) || { data:"", timer:null };
+  const queue = state.rawQueues.get(vmid) || { data:"", timer:null, sending:false };
   queue.data += data;
   clearTimeout(queue.timer);
-  queue.timer = setTimeout(async () => {
-    const payload = queue.data;
-    queue.data = "";
-    try { await api(`/api/console/${vmid}/input`, { raw:true, data:payload }); }
-    catch (error) { appendOutput(vmid, `\r\n\x1b[31mОшибка ввода: ${error.message}\x1b[0m\r\n`); }
-  }, 24);
+  queue.timer = setTimeout(() => flushRawInput(vmid), data.includes("\r") || data.includes("\n") ? 0 : 20);
   state.rawQueues.set(vmid, queue);
+}
+
+function sendInterrupt(vmid) {
+  api(`/api/console/${vmid}/interrupt`).catch((error) => appendOutput(vmid, `\r\n\x1b[31mCtrl+C: ${error.message}\x1b[0m\r\n`));
 }
 
 function handleQgaInput(vmid, data) {

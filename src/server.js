@@ -160,7 +160,7 @@ async function handleRequest(request, response) {
       return;
     }
 
-    const match = url.pathname.match(/^\/api\/console\/(\d+)\/(connect|input|resize|disconnect)$/);
+    const match = url.pathname.match(/^\/api\/console\/(\d+)\/(connect|input|interrupt|resize|disconnect)$/);
     if (request.method === "POST" && match) {
       const vmid = Number(match[1]);
       try {
@@ -169,6 +169,7 @@ async function handleRequest(request, response) {
           const { command, data, raw } = await readJson(request);
           await consoleCenter.input(session.token, vmid, raw ? data : command, { raw: Boolean(raw) });
         }
+        if (match[2] === "interrupt") consoleCenter.interrupt(session.token, vmid);
         if (match[2] === "resize") {
           const { cols, rows } = await readJson(request);
           consoleCenter.resize(session.token, vmid, cols, rows);
