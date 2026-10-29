@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Наглядная симуляция движения пакетов по стенду демонстрационного экзамена" />
+    <title>Симуляция сети · Web Demo Checker</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/simulation.css" />
+  </head>
+  <body>
+    <header class="sim-topbar">
+      <a class="sim-brand" href="/">
+        <span class="sim-brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>Web Demo Checker</strong><small>Simulation mode</small></span>
+      </a>
+      <a class="back-link" href="/">← Вернуться к проверке</a>
+    </header>
+
+    <main class="sim-main">
+      <section class="sim-heading">
+        <div>
+          <span class="eyebrow">НАВИГАТОР ПАКЕТОВ</span>
+          <h1>Симуляция сети</h1>
+          <p>Выберите сценарий и проследите путь запроса и ответа между устройствами.</p>
+        </div>
+        <span class="simulation-badge">Учебная модель</span>
+      </section>
+
+      <section class="sim-controls" aria-label="Управление симуляцией">
+        <label>
+          <span>Сценарий</span>
+          <select id="scenario-select">
+            <option value="hq-internet">HQ-CLI → Интернет · HTTP</option>
+            <option value="hq-dns">HQ-CLI → HQ-SRV · DNS</option>
+            <option value="br-internet">BR-SRV → Интернет · HTTP</option>
+            <option value="hq-isp">HQ-RTR → ISP · ICMP</option>
+          </select>
+        </label>
+        <label class="speed-control">
+          <span>Скорость <strong id="speed-value">1×</strong></span>
+          <input id="speed-input" type="range" min="0.5" max="2" value="1" step="0.5" />
+        </label>
+        <button id="toggle-button" class="primary-button" type="button">▶ Запустить</button>
+        <button id="reset-button" class="secondary-button" type="button">Сбросить</button>
+      </section>
+
+      <section class="sim-workspace">
+        <div class="topology-wrap">
+          <svg id="topology" viewBox="0 0 1200 650" role="img" aria-labelledby="topology-title topology-description">
+            <title id="topology-title">Топология учебного стенда</title>
+            <desc id="topology-description">ISP соединён с маршрутизаторами HQ и BR. К ним подключены серверы, клиент и межсетевой экран.</desc>
+            <defs>
+              <filter id="packet-glow" x="-200%" y="-200%" width="400%" height="400%">
+                <feGaussianBlur stdDeviation="5" result="blur" />
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            <g class="links" aria-hidden="true">
+              <path data-link="internet-isp" d="M600 104 L600 170" />
+              <path data-link="isp-hqrtr" d="M560 230 L390 310" />
+              <path data-link="isp-brrtr" d="M640 230 L810 310" />
+              <path data-link="hqrtr-hqsrv" d="M330 370 L235 505" />
+              <path data-link="hqrtr-hqcli" d="M390 370 L465 505" />
+              <path data-link="brrtr-brfw" d="M810 370 L735 505" />
+              <path data-link="brrtr-brsrv" d="M870 370 L965 505" />
+            </g>
+            <g class="network-labels" aria-hidden="true">
+              <text x="470" y="265">WAN HQ · /28</text>
+              <text x="657" y="265">WAN BR · /28</text>
+              <text x="228" y="445">VLAN 100 · /27</text>
+              <text x="420" y="445">VLAN 200 · /24</text>
+              <text x="888" y="445">BR LAN · /28</text>
+            </g>
+            <g class="node internet-node" data-node="internet" transform="translate(520 42)">
+              <rect width="160" height="62" rx="18" />
+              <text class="node-name" x="80" y="28">Интернет</text>
+              <text class="node-meta" x="80" y="47">магистральная сеть</text>
+            </g>
+            <g class="node" data-node="isp" data-vmid="100" transform="translate(520 170)">
+              <rect width="160" height="70" rx="12" />
+              <circle class="state-dot" cx="17" cy="17" r="5" />
+              <text class="node-name" x="80" y="32">100 · ISP</text>
+              <text class="node-meta" x="80" y="52">NAT · forwarding</text>
+            </g>
+            <g class="node router" data-node="hqrtr" data-vmid="101" transform="translate(270 300)">
+              <rect width="160" height="70" rx="12" />
+              <circle class="state-dot" cx="17" cy="17" r="5" />
+              <text class="node-name" x="80" y="32">101 · HQ-RTR</text>
+              <text class="node-meta" x="80" y="52">EcoRouter</text>
+            </g>
+            <g class="node router" data-node="brrtr" data-vmid="102" transform="translate(770 300)">
+              <rect width="160" height="70" rx="12" />
+              <circle class="state-dot" cx="17" cy="17" r="5" />
+              <text class="node-name" x="80" y="32">102 · BR-RTR</text>
+              <text class="node-meta" x="80" y="52">EcoRouter</text>
+            </g>
+            <g class="node" data-node="hqsrv" data-vmid="104" transform="translate(155 505)">
+              <rect width="160" height="70" rx="12" />
+              <circle class="state-dot" cx="17" cy="17" r="5" />
+              <text class="node-name" x="80" y="32">104 · HQ-SRV</text>
+              <text class="node-meta" x="80" y="52">сервер</text>
+            </g>
+            <g class="node" data-node="hqcli" data-vmid="106" transform="translate(385 505)">
+              <rect width="160" height="70" rx="12" />
+              <circle class="state-dot" cx="17" cy="17" r="5" />
+              <text class="node-name" x="80" y="32">106 · HQ-CLI</text>
+              <text class="node-meta" x="80" y="52">клиент</text>
+            </g>
+            <g class="node firewall" data-node="brfw" data-vmid="103" transform="translate(655 505)">
+              <rect width="160" height="70" rx="12" />
+              <circle class="state-dot" cx="17" cy="17" r="5" />
+              <text class="node-name" x="80" y="32">103 · BR-FW</text>
+              <text class="node-meta" x="80" y="52">Ideco NGFW</text>
+            </g>
+            <g class="node" data-node="brsrv" data-vmid="105" transform="translate(885 505)">
+              <rect width="160" height="70" rx="12" />
+              <circle class="state-dot" cx="17" cy="17" r="5" />
+              <text class="node-name" x="80" y="32">105 · BR-SRV</text>
+              <text class="node-meta" x="80" y="52">сервер</text>
+            </g>
+            <g id="packet-layer" aria-hidden="true"></g>
+          </svg>
+        </div>
+
+        <aside class="sim-sidebar">
+          <div class="scenario-state" aria-live="polite">
+            <span>Текущий этап</span>
+            <strong id="current-step">Симуляция остановлена</strong>
+            <small id="scenario-description">HTTP-запрос от HQ-CLI через HQ-RTR и NAT на ISP.</small>
+          </div>
+          <div class="packet-legend">
+            <span><i class="request-dot"></i>Запрос</span>
+            <span><i class="response-dot"></i>Ответ</span>
+          </div>
+          <div class="event-log-heading"><span>Журнал</span><strong id="packet-count">0 пакетов</strong></div>
+          <div id="event-log" class="event-log" role="log"></div>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="/simulation.js"></script>
+  </body>
+</html>
