@@ -225,6 +225,32 @@ export async function applyEcoRouterRoutingChecks(assessment, adapter, serial, r
   }
   reportResult(report, hqDevice, vlanCheck);
 
+  for (const rule of [
+    { vmid: 104, id: "hqsrv-vlan-tag", vlan: 100 },
+    { vmid: 106, id: "cli-vlan-tag", vlan: 200 }
+  ]) {
+    const device = byVmid.get(rule.vmid);
+    const check = upsertCheck(device, rule.id, {
+      title: `Тег VLAN ${rule.vlan} в Proxmox`,
+      maxScore: 1,
+      method: `qm config ${rule.vmid}`,
+      expected: `Виртуальный NIC: tag=${rule.vlan} · общий bridge с trunk-портом HQ-RTR`
+    });
+    if (vlanTopology.error) {
+      setResult(check, "unknown", `Конфигурация Proxmox недоступна · ${vlanTopology.error}`, duration());
+    } else {
+      const deviceNics = rule.vmid === 104 ? vlanTopology.server : vlanTopology.client;
+      const taggedNic = deviceNics.find((nic) => nic.tag === rule.vlan);
+      const routerOnBridge = Boolean(taggedNic && vlanTopology.router.some((nic) => nic.bridge === taggedNic.bridge && nic.tag == null));
+      const valid = Boolean(taggedNic && routerOnBridge);
+      setResult(check, valid ? "pass" : "fail",
+        taggedNic
+          ? `qm config ${rule.vmid}: bridge=${taggedNic.bridge} · tag=${taggedNic.tag} · HQ-RTR на том же bridge=${routerOnBridge ? "да" : "нет"}`
+          : `qm config ${rule.vmid}: NIC с tag=${rule.vlan} не найден`, duration());
+    }
+    reportResult(report, device, check);
+  }
+
   const tunnelPair = pairTunnels(hq.tunnel, br.tunnel, hq.interfaces, br.interfaces);
   for (const [vmid, router, peer] of [[101, hq, br], [102, br, hq]]) {
     const device = byVmid.get(vmid);
