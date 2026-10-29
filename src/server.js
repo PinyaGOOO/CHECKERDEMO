@@ -11,6 +11,11 @@ import { consoleCenter } from "./services/console-center.js";
 import { createSession, deleteSession, expiredSessionCookie, loginAllowed, sessionCookie, sessionFromRequest, verifyRootPassword } from "./services/console-auth.js";
 
 const root = fileURLToPath(new URL("../public/", import.meta.url));
+const vendorFiles = new Map([
+  ["/vendor/xterm/xterm.mjs", fileURLToPath(new URL("../node_modules/@xterm/xterm/lib/xterm.mjs", import.meta.url))],
+  ["/vendor/xterm/xterm.css", fileURLToPath(new URL("../node_modules/@xterm/xterm/css/xterm.css", import.meta.url))],
+  ["/vendor/xterm/addon-fit.mjs", fileURLToPath(new URL("../node_modules/@xterm/addon-fit/lib/addon-fit.mjs", import.meta.url))]
+]);
 const port = Number(process.env.PORT || 8007);
 const consolePort = Number(process.env.CONSOLE_HTTPS_PORT || 8443);
 const runs = new Map();
@@ -111,6 +116,19 @@ async function serveStatic(pathname, response) {
   }
 }
 
+async function serveVendor(pathname, response) {
+  const resolved = vendorFiles.get(pathname);
+  if (!resolved) return false;
+  try {
+    const content = await readFile(resolved);
+    response.writeHead(200, { "Content-Type": extname(resolved) === ".css" ? types[".css"] : types[".js"], "Cache-Control": "public, max-age=86400" });
+    response.end(content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function handleRequest(request, response) {
   const secure = Boolean(request.socket.encrypted);
   const url = new URL(request.url, `${secure ? "https" : "http"}://${request.headers.host || "localhost"}`);
@@ -161,8 +179,8 @@ async function handleRequest(request, response) {
       try {
         if (match[2] === "connect") await consoleCenter.connect(session.token, vmid);
         if (match[2] === "input") {
-          const { command } = await readJson(request);
-          await consoleCenter.input(session.token, vmid, command);
+          const { command, data, raw } = await readJson(request);
+          await consoleCenter.input(session.token, vmid, raw ? data : command, { raw: Boolean(raw) });
         }
         if (match[2] === "disconnect") consoleCenter.disconnect(session.token, vmid);
         return json(response, 200, { ok: true });
@@ -234,6 +252,7 @@ async function handleRequest(request, response) {
     });
   }
 
+  if (request.method === "GET" && await serveVendor(url.pathname, response)) return;
   if (request.method === "GET" && await serveStatic(url.pathname, response)) return;
   json(response, 404, { error: "Not found" });
 }

@@ -1,37 +1,43 @@
+import { Terminal } from "/vendor/xterm/xterm.mjs";
+import { FitAddon } from "/vendor/xterm/addon-fit.mjs";
+
 const devices = [
   { vmid:100, name:"ISP", channel:"serial0" }, { vmid:101, name:"HQ-RTR", channel:"serial0" },
-  { vmid:102, name:"BR-RTR", channel:"serial0" }, { vmid:103, name:"BR-FW", channel:"QGA shell" },
+  { vmid:102, name:"BR-RTR", channel:"serial0" }, { vmid:103, name:"BR-FW", channel:"QGA shell", qga:true },
   { vmid:104, name:"HQ-SRV", channel:"serial0" }, { vmid:105, name:"BR-SRV", channel:"serial0" },
   { vmid:106, name:"HQ-CLI", channel:"serial0" }
 ];
-const state = { stream:null, connected:new Set() };
+const state = { stream:null, connected:new Set(), terminals:new Map(), qgaBuffers:new Map(), rawQueues:new Map() };
 const grid = document.querySelector("#console-grid");
 document.querySelector("#dashboard-link").href = `http://${location.hostname}:8007/`;
 
 function card(vmid) { return document.querySelector(`[data-vmid="${vmid}"]`); }
+
+function createTerminal(device, host) {
+  const terminal = new Terminal({
+    convertEol:true, cursorBlink:true, cursorStyle:"block", disableStdin:true,
+    fontFamily:'"Cascadia Mono", Consolas, "Liberation Mono", monospace', fontSize:12, lineHeight:1.18, scrollback:3000,
+    theme:{ background:"#050b12", foreground:"#c9d9d2", cursor:"#43dae4", cursorAccent:"#071117", selectionBackground:"#245a66", black:"#071018", red:"#ff6678", green:"#38d89f", yellow:"#f0b94d", blue:"#50a8e8", magenta:"#c787e8", cyan:"#43dae4", white:"#dbe7ef", brightBlack:"#64758a", brightRed:"#ff8795", brightGreen:"#62e7b7", brightYellow:"#f6cc75", brightBlue:"#79bef0", brightMagenta:"#dca5ef", brightCyan:"#73e7ed", brightWhite:"#ffffff" }
+  });
+  const fit = new FitAddon();
+  terminal.loadAddon(fit);
+  terminal.open(host);
+  fit.fit();
+  terminal.writeln("Нажмите «Подключить», чтобы открыть консоль.");
+  terminal.onData((data) => device.qga ? handleQgaInput(device.vmid, data) : queueRawInput(device.vmid, data));
+  new ResizeObserver(() => { try { fit.fit(); } catch {} }).observe(host);
+  state.terminals.set(device.vmid, { terminal, fit });
+}
 
 function renderCards() {
   for (const device of devices) {
     const article = document.createElement("article");
     article.className = "console-card";
     article.dataset.vmid = device.vmid;
-    article.innerHTML = `
-      <header class="console-card-header">
-        <div class="console-title"><i></i><span><strong>${device.vmid} · ${device.name}</strong><small>Отключено</small></span></div>
-        <div class="card-actions"><span class="channel">${device.channel}</span><button class="card-connect" type="button">Подключить</button></div>
-      </header>
-      <pre class="terminal" aria-live="polite">Нажмите «Подключить», чтобы открыть консоль.\n</pre>
-      <form class="command-form"><input aria-label="Команда для ${device.name}" autocomplete="off" spellcheck="false" placeholder="Введите команду…" disabled /><button type="submit" disabled>Enter</button></form>`;
+    article.innerHTML = `<header class="console-card-header"><div class="console-title"><i></i><span><strong>${device.vmid} · ${device.name}</strong><small>Отключено</small></span></div><div class="card-actions"><span class="channel">${device.channel}</span><button class="card-connect" type="button">Подключить</button></div></header><div class="terminal" aria-label="Консоль ${device.name}"></div>`;
     article.querySelector(".card-connect").addEventListener("click", () => state.connected.has(device.vmid) ? disconnect(device.vmid) : connect(device.vmid));
-    article.querySelector("form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const input = event.currentTarget.querySelector("input");
-      const command = input.value;
-      if (!command.trim()) return;
-      input.value = "";
-      await api(`/api/console/${device.vmid}/input`, { command });
-    });
     grid.append(article);
+    createTerminal(device, article.querySelector(".terminal"));
   }
 }
 
@@ -42,11 +48,45 @@ async function api(path, body = {}) {
   return result;
 }
 
-function appendOutput(vmid, data) {
-  const terminal = card(vmid)?.querySelector(".terminal");
-  if (!terminal) return;
-  terminal.textContent = `${terminal.textContent}${data}`.slice(-40_000);
-  terminal.scrollTop = terminal.scrollHeight;
+function terminalFor(vmid) { return state.terminals.get(vmid)?.terminal; }
+function appendOutput(vmid, data) { terminalFor(vmid)?.write(data); }
+
+function queueRawInput(vmid, data) {
+  if (!state.connected.has(vmid)) return;
+  const queue = state.rawQueues.get(vmid) || { data:"", timer:null };
+  queue.data += data;
+  clearTimeout(queue.timer);
+  queue.timer = setTimeout(async () => {
+    const payload = queue.data;
+    queue.data = "";
+    try { await api(`/api/console/${vmid}/input`, { raw:true, data:payload }); }
+    catch (error) { appendOutput(vmid, `\r\n\x1b[31mОшибка ввода: ${error.message}\x1b[0m\r\n`); }
+  }, 24);
+  state.rawQueues.set(vmid, queue);
+}
+
+function handleQgaInput(vmid, data) {
+  if (!state.connected.has(vmid)) return;
+  const terminal = terminalFor(vmid);
+  let buffer = state.qgaBuffers.get(vmid) || "";
+  for (const character of data) {
+    if (character === "\r") {
+      const command = buffer;
+      buffer = "";
+      terminal.write("\r\n");
+      if (command.trim()) api(`/api/console/${vmid}/input`, { command }).catch((error) => terminal.write(`\x1b[31m${error.message}\x1b[0m\r\n$ `));
+      else terminal.write("$ ");
+    } else if (character === "\u007f") {
+      if (buffer.length) { buffer = buffer.slice(0, -1); terminal.write("\b \b"); }
+    } else if (character === "\u0003") {
+      buffer = "";
+      terminal.write("^C\r\n$ ");
+    } else if (character >= " " && character !== "\u007f") {
+      buffer += character;
+      terminal.write(character);
+    }
+  }
+  state.qgaBuffers.set(vmid, buffer);
 }
 
 function setStatus(vmid, status, detail) {
@@ -58,7 +98,8 @@ function setStatus(vmid, status, detail) {
   if (connected) state.connected.add(vmid); else state.connected.delete(vmid);
   element.querySelector(".console-title small").textContent = detail || ({ connected:"Подключено", disconnected:"Отключено", connecting:"Подключение…", error:"Ошибка" })[status] || status;
   element.querySelector(".card-connect").textContent = connected ? "Отключить" : "Подключить";
-  element.querySelectorAll(".command-form input,.command-form button").forEach((control) => { control.disabled = !connected; });
+  const terminal = terminalFor(vmid);
+  if (terminal) { terminal.options.disableStdin = !connected; if (connected) terminal.focus(); }
 }
 
 function openEventStream() {
@@ -70,15 +111,13 @@ function openEventStream() {
     if (event.type === "output") appendOutput(event.vmid, event.data);
     if (event.type === "status") setStatus(event.vmid, event.status, event.message || event.channel);
   };
-  stream.onerror = () => {
-    if (state.stream === stream) document.querySelector("#secure-user").textContent = "Поток консолей потерян";
-  };
+  stream.onerror = () => { if (state.stream === stream) document.querySelector("#secure-user").textContent = "Поток консолей потерян"; };
 }
 
 async function connect(vmid) {
   setStatus(vmid, "connecting");
-  try { await api(`/api/console/${vmid}/connect`); }
-  catch (error) { setStatus(vmid, "error", error.message); appendOutput(vmid, `Ошибка: ${error.message}\n`); }
+  try { terminalFor(vmid)?.clear(); await api(`/api/console/${vmid}/connect`); }
+  catch (error) { setStatus(vmid, "error", error.message); appendOutput(vmid, `\x1b[31mОшибка: ${error.message}\x1b[0m\r\n`); }
 }
 
 async function disconnect(vmid) {
@@ -98,29 +137,13 @@ document.querySelector("#login-form").addEventListener("submit", async (event) =
   const input = document.querySelector("#root-password");
   const error = document.querySelector("#login-error");
   error.textContent = "Проверяем пароль…";
-  try {
-    await api("/api/console/login", { password:input.value });
-    input.value = "";
-    error.textContent = "";
-    unlock();
-  } catch (loginError) {
-    input.value = "";
-    error.textContent = loginError.message;
-    input.focus();
-  }
+  try { await api("/api/console/login", { password:input.value }); input.value = ""; error.textContent = ""; unlock(); }
+  catch (loginError) { input.value = ""; error.textContent = loginError.message; input.focus(); }
 });
 
-document.querySelector("#connect-all").addEventListener("click", async () => {
-  for (const device of devices) if (!state.connected.has(device.vmid)) await connect(device.vmid);
-});
-document.querySelector("#disconnect-all").addEventListener("click", async () => {
-  await Promise.all(devices.filter((device) => state.connected.has(device.vmid)).map((device) => disconnect(device.vmid)));
-});
-document.querySelector("#logout-button").addEventListener("click", async () => {
-  await api("/api/console/logout");
-  state.stream?.close();
-  location.reload();
-});
+document.querySelector("#connect-all").addEventListener("click", async () => { for (const device of devices) if (!state.connected.has(device.vmid)) await connect(device.vmid); });
+document.querySelector("#disconnect-all").addEventListener("click", async () => { await Promise.all(devices.filter((device) => state.connected.has(device.vmid)).map((device) => disconnect(device.vmid))); });
+document.querySelector("#logout-button").addEventListener("click", async () => { await api("/api/console/logout"); state.stream?.close(); location.reload(); });
 
 renderCards();
 fetch("/api/console/session").then((response) => response.ok ? response.json() : Promise.reject()).then(unlock).catch(() => {});

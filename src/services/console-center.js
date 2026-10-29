@@ -49,7 +49,7 @@ class ConsoleCenter {
     if (qgaVmids.has(vmid)) {
       owner.devices.set(vmid, { type: "qga" });
       this.publish(token, { type: "status", vmid, status: "connected", channel: "QGA shell" });
-      this.publish(token, { type: "output", vmid, data: "QGA command shell готов. Команды выполняются по Enter.\n" });
+      this.publish(token, { type: "output", vmid, data: "QGA command shell готов. Команды выполняются по Enter.\r\n$ " });
       return;
     }
 
@@ -68,8 +68,8 @@ class ConsoleCenter {
       socket.write("\r\n");
     });
     socket.on("data", (chunk) => {
-      const output = cleanTerminalOutput(chunk.toString("utf8"));
-      device.buffer = `${device.buffer}${output}`.slice(-600);
+      const output = chunk.toString("utf8");
+      device.buffer = `${device.buffer}${cleanTerminalOutput(output)}`.slice(-600);
       this.publish(token, { type: "output", vmid, data: output });
       if (!device.sentUser && /login:\s*$/i.test(device.buffer)) {
         device.sentUser = true;
@@ -91,22 +91,22 @@ class ConsoleCenter {
     });
   }
 
-  async input(token, vmid, command) {
+  async input(token, vmid, value, { raw = false } = {}) {
     if (!allowedVmids.has(vmid)) throw new Error("Unsupported VMID");
-    if (typeof command !== "string" || !command.trim() || command.length > 4096 || /[\u0000\u0003]/.test(command)) throw new Error("Invalid command");
+    if (typeof value !== "string" || !value.length || value.length > 4096 || value.includes("\u0000")) throw new Error("Invalid console input");
     const device = this.owner(token).devices.get(vmid);
     if (!device) throw new Error("Console is not connected");
     if (device.type === "serial") {
-      device.socket.write(`${command}\r\n`);
+      device.socket.write(raw ? value : `${value}\r\n`);
       return;
     }
-    this.publish(token, { type: "output", vmid, data: `$ ${command}\n` });
+    if (raw) throw new Error("Raw input is unavailable for QGA shell");
     try {
-      const result = await adapter.guestExec(vmid, "/bin/sh", ["-lc", command]);
+      const result = await adapter.guestExec(vmid, "/bin/sh", ["-lc", value]);
       const output = `${result["out-data"] || ""}${result["err-data"] || ""}`;
-      this.publish(token, { type: "output", vmid, data: output || `[exit ${result.exitcode ?? 0}]\n` });
+      this.publish(token, { type: "output", vmid, data: `${output || `[exit ${result.exitcode ?? 0}]\n`}\r\n$ ` });
     } catch (error) {
-      this.publish(token, { type: "output", vmid, data: `Ошибка QGA: ${error.message}\n` });
+      this.publish(token, { type: "output", vmid, data: `Ошибка QGA: ${error.message}\r\n$ ` });
     }
   }
 
