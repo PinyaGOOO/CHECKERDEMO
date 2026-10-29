@@ -13,6 +13,13 @@ document.querySelector("#dashboard-link").href = `http://${location.hostname}:80
 
 function card(vmid) { return document.querySelector(`[data-vmid="${vmid}"]`); }
 
+function fitWithCursorGutter(terminal, fit) {
+  const dimensions = fit.proposeDimensions();
+  if (!dimensions?.cols || !dimensions?.rows) return;
+  terminal.resize(dimensions.cols, Math.max(2, dimensions.rows - 1));
+  terminal.scrollToBottom();
+}
+
 function createTerminal(device, host) {
   const terminal = new Terminal({
     convertEol:true, cursorBlink:true, cursorStyle:"block", disableStdin:true,
@@ -22,10 +29,16 @@ function createTerminal(device, host) {
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(host);
-  fit.fit();
+  fitWithCursorGutter(terminal, fit);
   terminal.writeln("Нажмите «Подключить», чтобы открыть консоль.");
   terminal.onData((data) => device.qga ? handleQgaInput(device.vmid, data) : queueRawInput(device.vmid, data));
-  new ResizeObserver(() => { try { fit.fit(); } catch {} }).observe(host);
+  let resizeFrame = null;
+  new ResizeObserver(() => {
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => {
+      try { fitWithCursorGutter(terminal, fit); } catch {}
+    });
+  }).observe(host);
   state.terminals.set(device.vmid, { terminal, fit });
 }
 
