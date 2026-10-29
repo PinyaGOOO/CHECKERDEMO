@@ -1,5 +1,6 @@
 const state = { assessment: null, selected: "hq-rtr", running: false };
 const $ = (selector) => document.querySelector(selector);
+$("#console-center-link").href = `https://${location.hostname}:8443/consoles.html`;
 
 function deviceStatus(device) {
   if (device.state !== "running") return "offline";

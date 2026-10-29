@@ -11,6 +11,9 @@ WorkingDirectory=/opt/web-demo-checker
 ExecStart=/usr/bin/node /opt/web-demo-checker/src/server.js
 Environment=NODE_ENV=production
 Environment=PORT=8007
+Environment=CONSOLE_HTTPS_PORT=8443
+Environment=CONSOLE_TLS_KEY=/etc/web-demo-checker/tls.key
+Environment=CONSOLE_TLS_CERT=/etc/web-demo-checker/tls.crt
 Environment=CHECKER_MODE=live
 Environment=CHECKER_TRANSPORT=local
 Restart=on-failure
