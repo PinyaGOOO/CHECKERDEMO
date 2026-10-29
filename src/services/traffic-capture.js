@@ -55,13 +55,16 @@ export function parseTcpdumpLine(line, bridge, macMap = new Map()) {
 
 async function loadMacMap() {
   const macMap = new Map();
+  let ispExternalMac = null;
   await Promise.all([...names].map(async ([vmid, name]) => {
     const { stdout } = await execFileAsync("/usr/sbin/qm", ["config", String(vmid)], { timeout: 5_000 });
-    for (const match of stdout.matchAll(/^net\d+:\s+\w+=([0-9a-f:]{17}),/gim)) {
-      macMap.set(match[1].toLowerCase(), { vmid, name });
+    for (const match of stdout.matchAll(/^net(\d+):\s+\w+=([0-9a-f:]{17}),/gim)) {
+      const mac = match[2].toLowerCase();
+      macMap.set(mac, { vmid, name });
+      if (vmid === 100 && match[1] === "0") ispExternalMac = mac;
     }
   }));
-  return macMap;
+  return { macMap, ispExternalMac };
 }
 
 class TrafficCapture {
@@ -72,8 +75,7 @@ class TrafficCapture {
     this.sequence = 0;
     this.running = false;
     this.stopTimer = null;
-    this.rateWindow = 0;
-    this.rateCount = 0;
+    this.rates = new Map();
     this.keepalive = setInterval(() => {
       for (const client of this.clients) client.write(": keepalive\n\n");
     }, 15_000);
@@ -89,23 +91,26 @@ class TrafficCapture {
     for (const client of this.clients) this.send(client, event);
   }
 
-  allowPacket() {
+  allowPacket(bridge) {
     const second = Math.floor(Date.now() / 1000);
-    if (second !== this.rateWindow) {
-      this.rateWindow = second;
-      this.rateCount = 0;
-    }
-    this.rateCount += 1;
-    return this.rateCount <= 30;
+    const rate = this.rates.get(bridge) || { second, count: 0 };
+    if (second !== rate.second) Object.assign(rate, { second, count: 0 });
+    rate.count += 1;
+    this.rates.set(bridge, rate);
+    return rate.count <= 12;
   }
 
   async start() {
     if (this.running) return;
     this.running = true;
     try {
-      this.macMap = await loadMacMap();
+      const inventory = await loadMacMap();
+      this.macMap = inventory.macMap;
       for (const { bridge, interface: captureInterface } of captureTargets) {
-        const child = spawn("/bin/tcpdump", ["-l", "-n", "-e", "-tt", "-q", "-i", captureInterface, "arp or ip or ip6"], {
+        const filter = bridge === "vmbr0" && inventory.ispExternalMac
+          ? `(arp or ip or ip6) and ether host ${inventory.ispExternalMac}`
+          : "arp or ip or ip6";
+        const child = spawn("/bin/tcpdump", ["-l", "-n", "-e", "-tt", "-q", "-i", captureInterface, filter], {
           stdio: ["ignore", "pipe", "pipe"]
         });
         let stderr = "";
@@ -114,7 +119,7 @@ class TrafficCapture {
         const lines = readline.createInterface({ input: child.stdout });
         lines.on("line", (line) => {
           const event = parseTcpdumpLine(line, bridge, this.macMap);
-          if (event && this.allowPacket()) this.publish(event);
+          if (event && this.allowPacket(bridge)) this.publish(event);
         });
         child.once("exit", (code) => {
           this.processes.delete(bridge);
