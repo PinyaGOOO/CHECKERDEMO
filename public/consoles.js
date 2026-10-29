@@ -7,16 +7,17 @@ const devices = [
   { vmid:104, name:"HQ-SRV", channel:"serial0" }, { vmid:105, name:"BR-SRV", channel:"serial0" },
   { vmid:106, name:"HQ-CLI", channel:"serial0" }
 ];
-const state = { stream:null, connected:new Set(), terminals:new Map(), qgaBuffers:new Map(), rawQueues:new Map() };
+const state = { stream:null, connected:new Set(), terminals:new Map(), dimensions:new Map(), qgaBuffers:new Map(), rawQueues:new Map() };
 const grid = document.querySelector("#console-grid");
 document.querySelector("#dashboard-link").href = `http://${location.hostname}:8007/`;
 
 function card(vmid) { return document.querySelector(`[data-vmid="${vmid}"]`); }
 
-function fitWithCursorGutter(terminal, fit) {
+function fitWithCursorGutter(vmid, terminal, fit) {
   const dimensions = fit.proposeDimensions();
   if (!dimensions?.cols || !dimensions?.rows) return;
   terminal.resize(dimensions.cols, Math.max(2, dimensions.rows - 1));
+  state.dimensions.set(vmid, { cols:terminal.cols, rows:terminal.rows });
   terminal.scrollToBottom();
 }
 
@@ -29,14 +30,14 @@ function createTerminal(device, host) {
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(host);
-  fitWithCursorGutter(terminal, fit);
+  fitWithCursorGutter(device.vmid, terminal, fit);
   terminal.writeln("Нажмите «Подключить», чтобы открыть консоль.");
   terminal.onData((data) => device.qga ? handleQgaInput(device.vmid, data) : queueRawInput(device.vmid, data));
   let resizeFrame = null;
   new ResizeObserver(() => {
     cancelAnimationFrame(resizeFrame);
     resizeFrame = requestAnimationFrame(() => {
-      try { fitWithCursorGutter(terminal, fit); } catch {}
+      try { fitWithCursorGutter(device.vmid, terminal, fit); } catch {}
     });
   }).observe(host);
   state.terminals.set(device.vmid, { terminal, fit });
@@ -117,7 +118,14 @@ function setStatus(vmid, status, detail) {
   element.querySelector(".console-title small").textContent = detail || ({ connected:"Подключено", disconnected:"Отключено", connecting:"Подключение…", error:"Ошибка" })[status] || status;
   element.querySelector(".card-connect").textContent = connected ? "Отключить" : "Подключить";
   const terminal = terminalFor(vmid);
-  if (terminal) { terminal.options.disableStdin = !connected; if (connected) terminal.focus(); }
+  if (terminal) {
+    terminal.options.disableStdin = !connected;
+    if (connected) {
+      const size = state.dimensions.get(vmid);
+      if (size) api(`/api/console/${vmid}/resize`, size).catch(() => {});
+      terminal.focus();
+    }
+  }
 }
 
 function openEventStream() {

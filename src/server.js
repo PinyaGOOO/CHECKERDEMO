@@ -173,7 +173,7 @@ async function handleRequest(request, response) {
       return;
     }
 
-    const match = url.pathname.match(/^\/api\/console\/(\d+)\/(connect|input|disconnect)$/);
+    const match = url.pathname.match(/^\/api\/console\/(\d+)\/(connect|input|resize|disconnect)$/);
     if (request.method === "POST" && match) {
       const vmid = Number(match[1]);
       try {
@@ -181,6 +181,10 @@ async function handleRequest(request, response) {
         if (match[2] === "input") {
           const { command, data, raw } = await readJson(request);
           await consoleCenter.input(session.token, vmid, raw ? data : command, { raw: Boolean(raw) });
+        }
+        if (match[2] === "resize") {
+          const { cols, rows } = await readJson(request);
+          consoleCenter.resize(session.token, vmid, cols, rows);
         }
         if (match[2] === "disconnect") consoleCenter.disconnect(session.token, vmid);
         return json(response, 200, { ok: true });

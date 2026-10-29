@@ -4,6 +4,7 @@ import { cleanTerminalOutput } from "../adapters/ecorouter-serial.js";
 
 const allowedVmids = new Set([100, 101, 102, 103, 104, 105, 106]);
 const qgaVmids = new Set([103]);
+const linuxSerialVmids = new Set([100, 104, 105, 106]);
 const adapter = new ProxmoxSshAdapter({ transport: "local", timeout: 12_000 });
 
 class ConsoleCenter {
@@ -17,7 +18,7 @@ class ConsoleCenter {
   }
 
   owner(token) {
-    if (!this.owners.has(token)) this.owners.set(token, { clients: new Set(), devices: new Map(), closeTimer: null });
+    if (!this.owners.has(token)) this.owners.set(token, { clients: new Set(), devices: new Map(), sizes: new Map(), closeTimer: null });
     return this.owners.get(token);
   }
 
@@ -61,7 +62,7 @@ class ConsoleCenter {
       throw error;
     }
     const socket = net.createConnection({ path: `/var/run/qemu-server/${vmid}.serial0` });
-    const device = { type: "serial", socket, buffer: "", sentUser: false, sentPassword: false, resetting: true };
+    const device = { type: "serial", socket, buffer: "", sentUser: false, sentPassword: false, resetting: true, sttyApplied: false };
     owner.devices.set(vmid, device);
     socket.on("connect", () => {
       this.publish(token, { type: "status", vmid, status: "connected", channel: "serial0" });
@@ -84,6 +85,7 @@ class ConsoleCenter {
         socket.write(`${credentials.password}\r\n`);
       }
       if (/[#>]\s*$/.test(device.buffer)) device.resetting = false;
+      this.applyTerminalSize(owner, vmid, device);
     });
     socket.on("error", (error) => {
       this.publish(token, { type: "status", vmid, status: "error", message: error.message });
@@ -95,6 +97,23 @@ class ConsoleCenter {
       owner.devices.delete(vmid);
       this.locks.delete(vmid);
     });
+  }
+
+  applyTerminalSize(owner, vmid, device) {
+    if (!linuxSerialVmids.has(vmid) || device.sttyApplied || !/[$#]\s*$/.test(device.buffer)) return;
+    const size = owner.sizes.get(vmid);
+    if (!size) return;
+    device.sttyApplied = true;
+    device.socket.write(`stty rows ${size.rows} cols ${size.cols}; export TERM=xterm-256color\r\n`);
+  }
+
+  resize(token, vmid, cols, rows) {
+    if (!allowedVmids.has(vmid)) throw new Error("Unsupported VMID");
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 20 || cols > 500 || rows < 4 || rows > 200) throw new Error("Invalid terminal size");
+    const owner = this.owner(token);
+    owner.sizes.set(vmid, { cols, rows });
+    const device = owner.devices.get(vmid);
+    if (device?.type === "serial") this.applyTerminalSize(owner, vmid, device);
   }
 
   async input(token, vmid, value, { raw = false } = {}) {
