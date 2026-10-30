@@ -137,7 +137,9 @@ https_ok=0
 for _ in {1..20}; do
   curl -fsS "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1 && http_ok=1 || true
   curl -kfsS "https://127.0.0.1:${CONSOLE_HTTPS_PORT}/api/console/session" >/dev/null 2>&1 && https_ok=1 || true
-  (( http_ok == 1 && https_ok == 1 )) && break
+  if (( http_ok == 1 && https_ok == 1 )); then
+    break
+  fi
   sleep 0.5
 done
 
