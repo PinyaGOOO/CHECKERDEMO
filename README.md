@@ -104,6 +104,10 @@ cd /opt/web-demo-checker
 sudo ./deploy/install.sh
 ```
 
+Установщик поддерживает ноды **ALT Virtualization / ALT Server p11** и
+**Proxmox VE на Debian**. На ALT Node.js и npm устанавливаются штатными
+пакетами `node` и `npm`; Debian-скрипт NodeSource на ALT не запускается.
+
 ## Ручной запуск для разработки
 
 ```bash

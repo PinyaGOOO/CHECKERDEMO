@@ -26,37 +26,54 @@ detect_ip() {
 }
 
 [[ "${EUID}" -eq 0 ]] || fail "запустите установщик от root"
-command -v pvesh >/dev/null 2>&1 || fail "pvesh не найден: установку нужно выполнять на Proxmox VE"
-command -v qm >/dev/null 2>&1 || fail "qm не найден: установку нужно выполнять на Proxmox VE"
+command -v pvesh >/dev/null 2>&1 || fail "pvesh не найден: установку нужно выполнять на Proxmox VE / ALT Virtualization"
+command -v qm >/dev/null 2>&1 || fail "qm не найден: установку нужно выполнять на Proxmox VE / ALT Virtualization"
 [[ "${PORT}" =~ ^[0-9]+$ ]] && (( PORT > 0 && PORT < 65536 )) || fail "некорректный PORT"
 [[ "${CONSOLE_HTTPS_PORT}" =~ ^[0-9]+$ ]] && (( CONSOLE_HTTPS_PORT > 0 && CONSOLE_HTTPS_PORT < 65536 )) || fail "некорректный CONSOLE_HTTPS_PORT"
 [[ "${PORT}" != "${CONSOLE_HTTPS_PORT}" ]] || fail "HTTP и HTTPS порты должны различаться"
 
 if [[ "${SKIP_PACKAGES}" != "1" ]]; then
   log "Установка системных зависимостей"
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y ca-certificates curl git openssl tcpdump pamtester
+  [[ -r /etc/os-release ]] || fail "/etc/os-release не найден: невозможно определить ОС"
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  os_id="${ID,,}"
+  case "${os_id}" in
+    altlinux)
+      # ALT p11 ships a current Node.js as the `node` package. NodeSource's
+      # Debian bootstrapper must not be used here: it intentionally rejects ALT.
+      apt-get update
+      apt-get install -y ca-certificates curl git openssl tcpdump pamtester node npm
+      ;;
+    debian|ubuntu)
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y ca-certificates curl git openssl tcpdump pamtester
 
-  installed_major=0
-  if command -v node >/dev/null 2>&1; then
-    installed_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
-  fi
-  if (( installed_major < NODE_MAJOR )); then
-    setup_script="$(mktemp /tmp/nodesource-setup.XXXXXX)"
-    trap 'rm -f "${setup_script:-}"' EXIT
-    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o "${setup_script}"
-    bash "${setup_script}"
-    rm -f "${setup_script}"
-    trap - EXIT
-    apt-get install -y nodejs
-  fi
+      installed_major=0
+      if command -v node >/dev/null 2>&1; then
+        installed_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+      fi
+      if (( installed_major < NODE_MAJOR )); then
+        setup_script="$(mktemp /tmp/nodesource-setup.XXXXXX)"
+        trap 'rm -f "${setup_script:-}"' EXIT
+        curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o "${setup_script}"
+        bash "${setup_script}"
+        rm -f "${setup_script}"
+        trap - EXIT
+        apt-get install -y nodejs
+      fi
+      ;;
+    *)
+      fail "ОС ${PRETTY_NAME:-${os_id}} пока не поддерживается установщиком"
+      ;;
+  esac
 fi
 
 command -v node >/dev/null 2>&1 || fail "Node.js не найден"
 command -v npm >/dev/null 2>&1 || fail "npm не найден"
 node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
-(( node_major >= 20 )) || fail "требуется Node.js 20+, установлен $(node --version)"
+(( node_major >= NODE_MAJOR )) || fail "требуется Node.js ${NODE_MAJOR}+, установлен $(node --version)"
 
 log "Установка исходного кода в ${INSTALL_DIR}"
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
