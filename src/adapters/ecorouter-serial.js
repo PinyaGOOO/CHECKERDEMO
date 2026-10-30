@@ -62,21 +62,32 @@ export class EcoRouterSerialAdapter {
 
     try {
       await connected;
-      // Ctrl+C returns a half-entered login/password prompt to a known state,
-      // and is harmless when an authenticated CLI prompt is already active.
-      socket.write("q\x03\r\n");
-      await delay(650);
-      let screen = cleanTerminalOutput(chunks.join(""));
+      // Establish a known authenticated prompt first. A freshly opened serial
+      // socket does not always print `login:` within a fixed 650 ms window.
+      socket.write("\x03\r\n");
+      const loginDeadline = Date.now() + 5_000;
+      let lastWakeup = 0;
+      while (Date.now() < loginDeadline) {
+        await delay(150);
+        const screen = cleanTerminalOutput(chunks.join(""));
+        if (cliPromptVisible(screen)) break;
+        if (/login:\s*$/i.test(screen)) {
+          socket.write(`${credentials.username}\r\n`);
+          await delay(250);
+          continue;
+        }
+        if (/Password:\s*$/i.test(screen)) {
+          socket.write(`${credentials.password}\r\n`);
+          await delay(800);
+          continue;
+        }
+        if (Date.now() - lastWakeup >= 600) {
+          socket.write("\r\n");
+          lastWakeup = Date.now();
+        }
+      }
 
-      if (/login:\s*$/i.test(screen)) {
-        socket.write(`${credentials.username}\r\n`);
-        await delay(350);
-        screen = cleanTerminalOutput(chunks.join(""));
-      }
-      if (/Password:\s*$/i.test(screen)) {
-        socket.write(`${credentials.password}\r\n`);
-        await delay(1_400);
-      }
+      if (!cliPromptVisible(chunks.join(""))) throw new Error("EcoRouter login prompt timeout");
 
       // A browser console may have been left inside configuration mode.
       // Return to the privileged EXEC prompt before issuing show commands.
