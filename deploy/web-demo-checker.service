@@ -9,6 +9,7 @@ User=root
 Group=root
 WorkingDirectory=/opt/web-demo-checker
 ExecStart=/usr/bin/node /opt/web-demo-checker/src/server.js
+EnvironmentFile=-/etc/web-demo-checker/checker.env
 Environment=NODE_ENV=production
 Environment=PORT=8007
 Environment=CONSOLE_HTTPS_PORT=8443
