@@ -272,6 +272,24 @@ interface clients
   assert.deepEqual(parsed.addressPools.get("VLAN200"), { name: "VLAN200", start: "192.168.200.2", end: "192.168.200.254" });
   assert.equal(parsed.servers[0].dns, "192.168.100.2");
   assert.deepEqual(parsed.bindings, [{ interface: "clients", server: 1 }]);
+  const blockSyntax = parseDhcpServerConfig(`
+ip pool 1 1
+ range 192.168.200.2-192.168.200.254
+!
+dhcp-server 1
+ mask 255.255.255.0
+ pool 1 1
+  gateway 192.168.200.1
+  dns 192.168.100.2
+!
+interface 200
+ ip address 192.168.200.1/24
+ dhcp-server 1
+!`);
+  assert.deepEqual(blockSyntax.addressPools.get("1"), { name: "1", start: "192.168.200.2", end: "192.168.200.254" });
+  assert.equal(blockSyntax.servers[0].mask, 24);
+  assert.equal(blockSyntax.servers[0].gateway, "192.168.200.1");
+  assert.deepEqual(blockSyntax.bindings, [{ interface: "200", server: 1 }]);
   assert.deepEqual(parseClientDhcp(`METHOD=auto
 IP4.ADDRESS[1]: 192.168.200.10/24
 IP4.GATEWAY: 192.168.200.1

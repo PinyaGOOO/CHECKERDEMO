@@ -42,19 +42,51 @@ function ipv4ToInt(address) {
   return octets.reduce((result, value) => ((result << 8) | value) >>> 0, 0);
 }
 
+function netmaskToPrefix(value) {
+  if (/^\d{1,2}$/.test(value)) {
+    const prefix = Number(value);
+    return prefix >= 0 && prefix <= 32 ? prefix : null;
+  }
+  const mask = ipv4ToInt(value);
+  if (mask == null) return null;
+  let prefix = 0;
+  let zeroSeen = false;
+  for (let bit = 31; bit >= 0; bit -= 1) {
+    const set = Boolean(mask & (1 << bit));
+    if (set && zeroSeen) return null;
+    if (set) prefix += 1;
+    else zeroSeen = true;
+  }
+  return prefix;
+}
+
 export function parseDhcpServerConfig(config) {
   const addressPools = new Map();
   const servers = [];
   const bindings = [];
+  let addressPool = null;
   let server = null;
   let networkInterface = null;
   for (const rawLine of config.split(/\r?\n/)) {
-    const addressPool = rawLine.match(/^ip\s+pool\s+(\S+)\s+(\d+(?:\.\d+){3})-(\d+(?:\.\d+){3})\s*$/i);
-    if (addressPool) {
-      addressPools.set(addressPool[1], { name: addressPool[1], start: addressPool[2], end: addressPool[3] });
+    const inlinePool = rawLine.match(/^ip\s+pool\s+(\S+)\s+(\d+(?:\.\d+){3})-(\d+(?:\.\d+){3})\s*$/i);
+    if (inlinePool) {
+      addressPools.set(inlinePool[1], { name: inlinePool[1], start: inlinePool[2], end: inlinePool[3] });
+      addressPool = null;
       server = null;
       networkInterface = null;
       continue;
+    }
+    const addressPoolBlock = rawLine.match(/^ip\s+pool\s+(\S+)(?:\s+\S+)?\s*$/i);
+    if (addressPoolBlock) {
+      addressPool = { name: addressPoolBlock[1], start: null, end: null };
+      addressPools.set(addressPool.name, addressPool);
+      server = null;
+      networkInterface = null;
+      continue;
+    }
+    if (addressPool) {
+      const range = rawLine.match(/^\s+range\s+(\d+(?:\.\d+){3})-(\d+(?:\.\d+){3})\s*$/i);
+      if (range) [addressPool.start, addressPool.end] = [range[1], range[2]];
     }
     const serverMatch = rawLine.match(/^dhcp-server\s+(\d+)\s*$/i);
     if (serverMatch) {
@@ -70,14 +102,15 @@ export function parseDhcpServerConfig(config) {
       continue;
     }
     if (/^[^\s!]/.test(rawLine)) {
+      addressPool = null;
       server = null;
       networkInterface = null;
     }
     if (server) {
       const pool = rawLine.match(/^\s+pool\s+(\S+)\s+\d+\s*$/i);
       if (pool) server.poolName = pool[1];
-      const mask = rawLine.match(/^\s+mask\s+(\d+)\s*$/i);
-      if (mask) server.mask = Number(mask[1]);
+      const mask = rawLine.match(/^\s+mask\s+(\S+)\s*$/i);
+      if (mask) server.mask = netmaskToPrefix(mask[1]);
       const gateway = rawLine.match(/^\s+gateway\s+(\d+(?:\.\d+){3})\s*$/i);
       if (gateway) server.gateway = gateway[1];
       const dns = rawLine.match(/^\s+dns\s+(\d+(?:\.\d+){3})\s*$/i);
@@ -235,8 +268,9 @@ export async function applyDhcpAndTimezoneChecks(assessment, adapter, serial, re
   if (dhcpError) setResult(serverCheck, "unknown", `Данные недоступны · ${dhcpError}`, duration());
   else {
     const valid = Boolean(dhcpData.matched && dhcpData.poolValid && dhcpData.optionsValid && dhcpData.hqServerNotServingDhcp);
+    const matched = dhcpData.matched;
     setResult(serverCheck, valid ? "pass" : "fail",
-      `HQ-RTR server=${dhcpData.matched ? dhcpData.matched.server.number : "не найден"} · pool=${dhcpData.poolValid ? "корректен" : "ошибка"} · параметры=${dhcpData.optionsValid ? "корректны" : "ошибка"} · DHCP на HQ-SRV=${dhcpData.hqServerNotServingDhcp ? "нет" : "обнаружен"}`, duration());
+      `HQ-RTR server=${matched ? matched.server.number : "не найден"} · pool=${matched ? `${matched.pool.start}-${matched.pool.end}` : "не найден"} (${dhcpData.poolValid ? "корректен" : "ошибка"}) · gateway=${matched?.server.gateway || "нет"} · DNS=${matched?.server.dns || "нет"}${dhcpData.hqServerAddress ? ` (ожидается ${dhcpData.hqServerAddress.address})` : ""} · параметры=${dhcpData.optionsValid ? "корректны" : "ошибка"} · DHCP на HQ-SRV=${dhcpData.hqServerNotServingDhcp ? "нет" : "обнаружен"}`, duration());
   }
   reportResult(report, hqDevice, serverCheck);
 
