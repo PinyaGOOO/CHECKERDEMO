@@ -128,23 +128,30 @@ function formatScore(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(".", ",");
 }
 
+function scoreLabel(value) {
+  if (value === 1) return "1 балл";
+  if (Number.isInteger(value) && value >= 2 && value <= 4) return `${value} балла`;
+  if (!Number.isInteger(value)) return `${formatScore(value)} балла`;
+  return `${value} баллов`;
+}
+
 function card(item) {
   const official = officialResults.get(item.code);
-  const resultLabel = official
-    ? official.level == null ? "Требуется ручная проверка" : `Уровень ${official.level} · ${formatScore(official.score)} / ${official.maxScore}`
-    : "Результата пока нет";
   const article = document.createElement("article");
   article.className = "criterion-card";
   article.innerHTML = `
     <header class="criterion-head">
       <span class="criterion-code">${item.code}</span>
       <h2>${item.title}</h2>
-      <span class="criterion-weight"><strong>${item.weight}</strong><span>макс.</span><span class="criterion-result ${official?.status || "unknown"}">${resultLabel}</span></span>
+      <span class="criterion-weight"><strong>${item.weight}</strong><span>макс.</span></span>
     </header>
     <ol class="rubric">
       ${item.levels.map((text, level) => `<li><span class="level level-${level}">${level}</span><span>${text}</span></li>`).join("")}
     </ol>
-    ${official ? `<div class="official-evidence"><strong>Основание оценки</strong><br>${official.evidence}</div>` : ""}`;
+    ${official ? `<div class="official-evidence">
+      <div><strong>Основание оценки</strong><p>${official.evidence}</p></div>
+      <span class="official-total ${official.status}">${official.level == null ? "Итого — не оценено" : `Итого — ${scoreLabel(official.score)}`}</span>
+    </div>` : ""}`;
   return article;
 }
 
