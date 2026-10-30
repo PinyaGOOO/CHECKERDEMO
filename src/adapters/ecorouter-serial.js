@@ -24,6 +24,8 @@ function cliPromptVisible(value) {
 
 export function parseEcoRouterHostname(value) {
   const cleaned = cleanTerminalOutput(value);
+  const configured = cleaned.match(/^\s*hostname\s+(\S+)\s*$/im)?.[1];
+  if (configured) return configured;
   const commandOffset = cleaned.toLowerCase().lastIndexOf("show hostname");
   const response = commandOffset >= 0 ? cleaned.slice(commandOffset + "show hostname".length) : cleaned;
   const lines = response.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -38,6 +40,11 @@ export class EcoRouterSerialAdapter {
   constructor({ socketDirectory = "/var/run/qemu-server", timeout = 6_000 } = {}) {
     this.socketDirectory = socketDirectory;
     this.timeout = timeout;
+    this.runningConfigCache = new Map();
+  }
+
+  beginSnapshot() {
+    this.runningConfigCache.clear();
   }
 
   async runCommand(vmid, credentials, command, wait = 900) {
@@ -105,25 +112,30 @@ export class EcoRouterSerialAdapter {
   }
 
   async getHostname(vmid, credentials) {
-    const output = await this.runCommand(vmid, credentials, "show hostname");
+    const output = await this.getRunningConfig(vmid, credentials);
     const hostname = parseEcoRouterHostname(output);
       if (!hostname) throw new Error("EcoRouter did not return hostname");
       return hostname;
   }
 
   async getIpInterfaceBrief(vmid, credentials) {
-    return this.runCommand(vmid, credentials, "show ip interface brief", 1_200);
+    return this.getRunningConfig(vmid, credentials);
   }
 
   async getNetworkConfiguration(vmid, credentials) {
-    const brief = await this.getIpInterfaceBrief(vmid, credentials);
-    if (/\b\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}\b/.test(brief)) return brief;
-    const runningConfig = await this.runCommand(vmid, credentials, "show running-config", 2_000);
-    return `${brief}\n${runningConfig}`;
+    return this.getRunningConfig(vmid, credentials);
   }
 
   async getRunningConfig(vmid, credentials) {
-    return this.runCommand(vmid, credentials, "show running-config", 2_500);
+    if (!this.runningConfigCache.has(vmid)) {
+      const pending = this.runCommand(vmid, credentials, "show running-config", 2_500)
+        .catch((error) => {
+          this.runningConfigCache.delete(vmid);
+          throw error;
+        });
+      this.runningConfigCache.set(vmid, pending);
+    }
+    return this.runningConfigCache.get(vmid);
   }
 
   async testCredentials(vmid, credentials) {

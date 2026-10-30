@@ -155,19 +155,15 @@ async function collectRouter(vmid, adapter, serial, report) {
   const result = { config: "", brief: "", neighbors: "", routes: "", interfaces: [], tunnel: null, ospf: null, error: null };
   try {
     const credentials = await adapter.vmConsoleCredentials(vmid);
-    report({ kind: "command", vmid, command: "show running-config", message: `Читаем VLAN, туннель и OSPF на VM ${vmid}` });
     result.config = await serial.getRunningConfig(vmid, credentials);
-    result.brief = await serial.getIpInterfaceBrief(vmid, credentials);
     report({ kind: "command", vmid, command: "show ip ospf neighbor", message: `Проверяем OSPF-соседство на VM ${vmid}` });
     result.neighbors = await serial.runCommand(vmid, credentials, "show ip ospf neighbor", 1_800);
     report({ kind: "command", vmid, command: "show ip route ospf", message: `Читаем маршруты OSPF на VM ${vmid}` });
     result.routes = await serial.runCommand(vmid, credentials, "show ip route ospf", 1_800);
-    // Only the interface table is authoritative here. Running-config also
-    // contains OSPF network statements and routes with CIDR values, which are
-    // not local interface addresses and must not become expected peer routes.
-    result.interfaces = parseEcoRouterInterfaces(result.brief);
-    result.tunnel = parseTunnel(result.config, result.brief);
+    result.interfaces = parseEcoRouterInterfaces(result.config);
+    result.tunnel = parseTunnel(result.config);
     result.ospf = parseOspfState(result.config, result.neighbors, result.routes, result.tunnel?.name);
+    if (result.tunnel) result.tunnel.status = result.ospf.neighborOnTunnel ? "up" : "down";
   } catch (error) {
     result.error = errorSummary(error);
   }

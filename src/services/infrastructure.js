@@ -56,6 +56,9 @@ export async function applyLiveInfrastructure(assessment, { report = () => {} } 
     };
     await applyHostnameChecks(assessment, adapter, report);
     if (adapter.transport === "local") {
+      // One running-config snapshot per EcoRouter is shared by every static
+      // configuration check during this assessment run.
+      ecoRouterSerial.beginSnapshot();
       await applyEcoRouterHostnameChecks(assessment, adapter, ecoRouterSerial, report);
       await applyTopologyNetworkChecks(assessment, adapter, ecoRouterSerial, report);
       await applyInternetAccessChecks(assessment, adapter, ecoRouterSerial, report);

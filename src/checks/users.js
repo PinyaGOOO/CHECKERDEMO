@@ -101,7 +101,6 @@ export async function applyUserChecks(assessment, adapter, serial, report = () =
     });
     try {
       const credentials = await adapter.vmConsoleCredentials(vmid);
-      report({ kind: "command", vmid, command: "show running-config", message: `Проверяем net_admin на ${device.name}` });
       const config = await serial.getRunningConfig(vmid, credentials);
       const user = parseEcoRouterUser(config, "net_admin");
       const login = user?.role?.toLowerCase() === "admin" && user.passwordConfigured

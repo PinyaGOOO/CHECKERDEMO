@@ -4,7 +4,7 @@ import { snapshot } from "../src/data/assessment.js";
 import { ProxmoxSshAdapter } from "../src/adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-server.js";
 import { applyHostnameChecks, parseEcoRouterDomain, recalculateDeviceScores } from "../src/checks/hostnames.js";
-import { parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
+import { EcoRouterSerialAdapter, parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
 import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
 import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
 import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../src/checks/ecorouter-routing.js";
@@ -91,6 +91,29 @@ test("EcoRouter serial output parser extracts hostname", () => {
   const output = "ecorouter>show hostname\r\n\recorouter\x1b[m\r\n\recorouter>";
   assert.equal(parseEcoRouterHostname(output), "ecorouter");
   assert.equal(parseEcoRouterHostname("show hostname\nbr-rtr\nbr-rtr>\nend\n"), "br-rtr");
+});
+
+test("EcoRouter adapter shares one running-config snapshot per assessment", async () => {
+  const serial = new EcoRouterSerialAdapter();
+  let calls = 0;
+  serial.runCommand = async () => {
+    calls += 1;
+    return "hostname hq-rtr\ninterface te0\n ip address 10.0.0.1/28\n";
+  };
+  serial.beginSnapshot();
+  const credentials = { username: "admin", password: "secret" };
+  const [config, hostname, interfaces] = await Promise.all([
+    serial.getRunningConfig(101, credentials),
+    serial.getHostname(101, credentials),
+    serial.getIpInterfaceBrief(101, credentials)
+  ]);
+  assert.match(config, /hostname hq-rtr/);
+  assert.equal(hostname, "hq-rtr");
+  assert.match(interfaces, /interface te0/);
+  assert.equal(calls, 1);
+  serial.beginSnapshot();
+  await serial.getRunningConfig(101, credentials);
+  assert.equal(calls, 2);
 });
 
 test("EcoRouter domain parser reads ip domain name independently from hostname", () => {

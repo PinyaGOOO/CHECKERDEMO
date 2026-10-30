@@ -163,7 +163,6 @@ export async function applyDhcpAndTimezoneChecks(assessment, adapter, serial, re
   const routerData = new Map(await Promise.all(routerTimezoneVmids.map(async (vmid) => {
     try {
       const credentials = await adapter.vmConsoleCredentials(vmid);
-      report({ kind: "command", vmid, command: "show running-config", message: `Проверяем UTC+5 на VM ${vmid}` });
       const config = await serial.getRunningConfig(vmid, credentials);
       return [vmid, { config, error: null }];
     } catch (error) {

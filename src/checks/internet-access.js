@@ -92,13 +92,10 @@ async function collectIsp(adapter, report) {
 }
 
 async function collectRouter(rule, adapter, serial, report) {
-  const result = { config: "", routes: "", error: null };
+  const result = { config: "", error: null };
   try {
     const credentials = await adapter.vmConsoleCredentials(rule.vmid);
-    report({ kind: "command", vmid: rule.vmid, command: "show running-config", message: "Читаем WAN service-instance" });
     result.config = await serial.getRunningConfig(rule.vmid, credentials);
-    report({ kind: "command", vmid: rule.vmid, command: "show ip route static", message: "Проверяем маршрут по умолчанию" });
-    result.routes = await serial.runCommand(rule.vmid, credentials, "show ip route static", 1_200);
   } catch (error) {
     result.error = errorSummary(error);
   }
@@ -191,8 +188,7 @@ export async function applyInternetAccessChecks(assessment, adapter, serial, rep
     if (router.error || isp.error) {
       setResult(routeCheck, "unknown", `Данные недоступны · ${router.error || isp.error}`, duration());
     } else {
-      const combined = `${router.config}\n${router.routes}`;
-      const found = Boolean(ispEndpoint && new RegExp(`0\\.0\\.0\\.0/0[^\\n]*${escapeRegex(ispEndpoint.address)}`).test(combined));
+      const found = Boolean(ispEndpoint && new RegExp(`0\\.0\\.0\\.0/0[^\\n]*${escapeRegex(ispEndpoint.address)}`).test(router.config));
       setResult(routeCheck, found ? "pass" : "fail", `шлюз ISP=${ispEndpoint?.address || "не найден"} · default route=${found ? "найден" : "не найден"}`, duration());
     }
     reportResult(report, device, routeCheck);

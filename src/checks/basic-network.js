@@ -84,10 +84,15 @@ function routeGateway(execResult) {
 function parseEcoRouterInterfaces(output) {
   const interfaces = [];
   let currentInterface = null;
+  const isRunningConfig = /^interface\s+\S+/im.test(output);
   for (const rawLine of output.split(/\r?\n/)) {
     const line = rawLine.trim();
     const interfaceMatch = line.match(/^interface\s+(\S+)/i);
     if (interfaceMatch) currentInterface = interfaceMatch[1];
+    if (isRunningConfig && line === "!") currentInterface = null;
+    const configuredAddress = /^ip\s+address\b/i.test(line);
+    const briefAddress = /^\S+\s+\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}\s+(?:up|down|administratively\s+down)\b/i.test(line);
+    if (isRunningConfig && !configuredAddress && !briefAddress) continue;
     for (const cidr of line.matchAll(/\b(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})\b/g)) {
       const firstToken = line.split(/\s+/)[0];
       const name = currentInterface && /^ip\s+address\b/i.test(line) ? currentInterface : firstToken;
@@ -174,7 +179,6 @@ async function collectEcoRouter(device, proxmox, serial, report) {
     return observation;
   }
   try {
-    report({ kind: "command", vmid: device.vmid, device: device.name, command: "show ip interface brief", message: `Читаем адреса ${device.name} через serial CLI` });
     const credentials = await proxmox.vmConsoleCredentials(device.vmid);
     const output = serial.getNetworkConfiguration
       ? await serial.getNetworkConfiguration(device.vmid, credentials)

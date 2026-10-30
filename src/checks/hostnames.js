@@ -88,10 +88,9 @@ export async function applyEcoRouterHostnameChecks(assessment, proxmox, serial, 
     }
     const startedAt = performance.now();
     try {
-      report({ kind: "command", vmid: rule.vmid, device: device.name, command: "show hostname", message: `Проверяем hostname ${device.name} через serial CLI` });
+      report({ kind: "command", vmid: rule.vmid, device: device.name, command: "show running-config", message: `Читаем общий снимок конфигурации ${device.name}` });
       const credentials = await proxmox.vmConsoleCredentials(rule.vmid);
       const actual = await serial.getHostname(rule.vmid, credentials);
-      report({ kind: "command", vmid: rule.vmid, device: device.name, command: "show running-config", message: `Проверяем ip domain name на ${device.name}` });
       const config = await serial.getRunningConfig(rule.vmid, credentials);
       const actualDomain = parseEcoRouterDomain(config);
       const hostnameMatches = actual.localeCompare(rule.expected, undefined, { sensitivity: "accent" }) === 0;
