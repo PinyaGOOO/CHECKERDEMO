@@ -11,6 +11,7 @@ CONSOLE_HTTPS_PORT="${CONSOLE_HTTPS_PORT:-8443}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
 SKIP_PACKAGES="${SKIP_PACKAGES:-0}"
 REGENERATE_TLS="${REGENERATE_TLS:-0}"
+LAB_VMIDS="${LAB_VMIDS:-100 101 102 103 104 105 106}"
 
 log() { printf '\n[%s] %s\n' "${SERVICE_NAME}" "$*"; }
 fail() { printf '\n[%s] ERROR: %s\n' "${SERVICE_NAME}" "$*" >&2; exit 1; }
@@ -25,12 +26,64 @@ detect_ip() {
   printf '%s\n' "${route_address}"
 }
 
+qga_enabled_in_config() {
+  local vmid="$1" agent
+  agent="$(qm config "${vmid}" | awk -F': ' '$1 == "agent" {print $2; exit}')"
+  [[ "${agent}" =~ ^1(,|$) || "${agent}" =~ (^|,)enabled=1(,|$) ]]
+}
+
+prepare_qga_devices() {
+  local vmid status
+  local -a vmids=() missing=()
+
+  for vmid in ${LAB_VMIDS}; do
+    [[ "${vmid}" =~ ^[0-9]+$ ]] || fail "некорректный VMID в LAB_VMIDS: ${vmid}"
+    qm status "${vmid}" >/dev/null 2>&1 || fail "VM ${vmid} из LAB_VMIDS не найдена"
+    vmids+=("${vmid}")
+    qga_enabled_in_config "${vmid}" || missing+=("${vmid}")
+  done
+  (( ${#vmids[@]} > 0 )) || fail "LAB_VMIDS не содержит VMID"
+
+  if (( ${#missing[@]} == 0 )); then
+    log "QEMU Guest Agent уже включён в настройках VM ${LAB_VMIDS}"
+    return
+  fi
+
+  log "QEMU Guest Agent выключен у VM: ${missing[*]}"
+  printf '[%s] ВНИМАНИЕ: для применения настройки все VM (%s) будут жёстко остановлены командой qm stop и запущены снова.\n' "${SERVICE_NAME}" "${LAB_VMIDS}"
+
+  for vmid in "${missing[@]}"; do
+    log "Включение QEMU Guest Agent в конфигурации VM ${vmid}"
+    qm set "${vmid}" --agent enabled=1
+  done
+
+  log "Жёсткая остановка VM ${LAB_VMIDS}"
+  for vmid in "${vmids[@]}"; do
+    status="$(qm status "${vmid}" | awk '{print $2}')"
+    if [[ "${status}" == "running" ]]; then
+      qm stop "${vmid}"
+    fi
+  done
+
+  log "Запуск VM ${LAB_VMIDS}"
+  for vmid in "${vmids[@]}"; do
+    qm start "${vmid}"
+  done
+
+  for vmid in "${vmids[@]}"; do
+    status="$(qm status "${vmid}" | awk '{print $2}')"
+    [[ "${status}" == "running" ]] || fail "VM ${vmid} не запустилась после включения QEMU Guest Agent"
+  done
+}
+
 [[ "${EUID}" -eq 0 ]] || fail "запустите установщик от root"
 command -v pvesh >/dev/null 2>&1 || fail "pvesh не найден: установку нужно выполнять на Proxmox VE / ALT Virtualization"
 command -v qm >/dev/null 2>&1 || fail "qm не найден: установку нужно выполнять на Proxmox VE / ALT Virtualization"
 [[ "${PORT}" =~ ^[0-9]+$ ]] && (( PORT > 0 && PORT < 65536 )) || fail "некорректный PORT"
 [[ "${CONSOLE_HTTPS_PORT}" =~ ^[0-9]+$ ]] && (( CONSOLE_HTTPS_PORT > 0 && CONSOLE_HTTPS_PORT < 65536 )) || fail "некорректный CONSOLE_HTTPS_PORT"
 [[ "${PORT}" != "${CONSOLE_HTTPS_PORT}" ]] || fail "HTTP и HTTPS порты должны различаться"
+
+prepare_qga_devices
 
 if [[ "${SKIP_PACKAGES}" != "1" ]]; then
   log "Установка системных зависимостей"
