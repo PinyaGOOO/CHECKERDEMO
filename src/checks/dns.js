@@ -197,5 +197,26 @@ export async function applyDnsChecks(assessment, adapter, serial, report = () =>
     }
     reportResult(report, device, check);
   }
+
+  const dnsDevice = byVmid.get(104);
+  const forwardingCheck = upsertCheck(dnsDevice, "hqsrv-dns-forwarding", {
+    title: "Пересылка DNS-запросов",
+    maxScore: 1,
+    method: "QEMU Guest Agent · named-checkconf",
+    expected: "forwarders содержит общедоступный DNS-сервер"
+  });
+  try {
+    report({ kind: "command", vmid: 104, command: "named-checkconf -p", message: "Проверяем пересылку DNS-запросов на HQ-SRV" });
+    const configuration = outputOf(await adapter.guestExec(104, "/bin/sh", ["-lc", "named-checkconf -p 2>/dev/null || cat /etc/named.conf /etc/named/*.conf 2>/dev/null"]));
+    const block = configuration.match(/forwarders\s*\{([\s\S]*?)\}/i)?.[1] || "";
+    const addresses = unique([...block.matchAll(/\b(\d{1,3}(?:\.\d+){3})\b/g)].map((match) => match[1]));
+    const publicForwarders = addresses.filter((address) => !isPrivateIpv4(address));
+    setResult(forwardingCheck, publicForwarders.length ? "pass" : "fail",
+      `forwarders=${addresses.join(",") || "не настроены"} · общедоступные=${publicForwarders.join(",") || "нет"}`,
+      Math.max(1, Math.round(performance.now() - startedAt)));
+  } catch (caught) {
+    setResult(forwardingCheck, "unknown", `Конфигурация DNS недоступна · ${errorSummary(caught)}`, Math.max(1, Math.round(performance.now() - startedAt)));
+  }
+  reportResult(report, dnsDevice, forwardingCheck);
 }
 

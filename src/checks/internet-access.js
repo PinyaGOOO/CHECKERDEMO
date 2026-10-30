@@ -206,6 +206,27 @@ export async function applyInternetAccessChecks(assessment, adapter, serial, rep
     }
     reportResult(report, device, bindingCheck);
   }
+
+  const officeInternet = await Promise.all([104, 105, 106].map(async (vmid) => {
+    try {
+      report({ kind: "command", vmid, command: "ping -c 1 -W 2 77.88.8.8", message: `Проверяем реальный выход в Интернет с VM ${vmid}` });
+      const probe = await adapter.guestExec(vmid, "/bin/sh", ["-lc", "ping -c 1 -W 2 77.88.8.8 >/dev/null 2>&1"]);
+      return [vmid, { reachable: Number(probe.exitcode ?? probe["exit-code"] ?? 1) === 0, error: null }];
+    } catch (error) {
+      return [vmid, { reachable: false, error: errorSummary(error) }];
+    }
+  }));
+  for (const [vmid, probe] of officeInternet) {
+    const device = byVmid.get(vmid);
+    const check = upsertCheck(device, `${device.id}-internet`, {
+      title: "Выход в Интернет",
+      method: "QEMU Guest Agent · ICMP probe",
+      expected: "77.88.8.8 доступен из гостевой системы"
+    });
+    if (probe.error) setResult(check, "unknown", `Проба недоступна · ${probe.error}`, duration());
+    else setResult(check, probe.reachable ? "pass" : "fail", `ping 77.88.8.8: ${probe.reachable ? "успешно" : "нет ответа"}`, duration());
+    reportResult(report, device, check);
+  }
 }
 
 export { hasMasquerade, te0BindingValid, networkCidr };

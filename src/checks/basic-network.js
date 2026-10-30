@@ -195,7 +195,7 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
   const observations = new Map();
   const startedAt = performance.now();
 
-  await Promise.all([100, 104, 106].map(async (vmid) => {
+  await Promise.all([100, 104, 105, 106].map(async (vmid) => {
     observations.set(vmid, await collectLinux(byVmid.get(vmid), adapter, report, vmid !== 100));
   }));
   await Promise.all([101, 102].map(async (vmid) => {
@@ -321,6 +321,23 @@ export async function applyTopologyNetworkChecks(assessment, adapter, serial, re
     setResult(gatewayCheck, gatewayStatus, gatewayEvidence, Math.max(1, Math.round(performance.now() - startedAt)));
     report({ kind: "result", vmid: device.vmid, device: device.name, check: { ...gatewayCheck }, message: `${gatewayCheck.title}: ${gatewayStatus === "pass" ? "выполнено" : gatewayStatus === "fail" ? "ошибка" : "недоступно"} · ${gatewayEvidence}` });
   }
+
+  const brServer = byVmid.get(105);
+  const brObservation = observations.get(105);
+  const brAddressCheck = upsertCheck(brServer, "brsrv-ipv4", {
+    title: "IPv4 сети филиала",
+    method: "QEMU Guest Agent",
+    expected: "частный доступный IPv4 /28"
+  });
+  if (brObservation.addressError) {
+    setResult(brAddressCheck, "unknown", `QGA недоступен · ${brObservation.addressError}`, Math.max(1, Math.round(performance.now() - startedAt)));
+  } else {
+    const endpoint = brObservation.addresses.find((candidate) => candidate.prefix === 28 && isPrivateIpv4(candidate.address) && isUsableHost(candidate.address, 28));
+    setResult(brAddressCheck, endpoint ? "pass" : "fail",
+      endpoint ? `${brServer.name}:${endpoint.address}/${endpoint.prefix}` : `${describeAddresses(brObservation)} · частный адрес /28 не найден`,
+      Math.max(1, Math.round(performance.now() - startedAt)));
+  }
+  report({ kind: "result", vmid: brServer.vmid, device: brServer.name, check: { ...brAddressCheck }, message: `${brAddressCheck.title}: ${brAddressCheck.status === "pass" ? "выполнено" : brAddressCheck.status === "fail" ? "ошибка" : "недоступно"} · ${brAddressCheck.evidence}` });
 }
 
 export { ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap };

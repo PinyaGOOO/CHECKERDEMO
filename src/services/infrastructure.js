@@ -8,6 +8,7 @@ import { applyDhcpAndTimezoneChecks } from "../checks/dhcp-timezone.js";
 import { applyUserChecks } from "../checks/users.js";
 import { applySshChecks } from "../checks/ssh.js";
 import { applyDnsChecks } from "../checks/dns.js";
+import { applyOfficialAssessment } from "../checks/official-assessment.js";
 
 const adapter = new ProxmoxSshAdapter({
   alias: process.env.CHECKER_SSH_ALIAS || "checker",
@@ -70,6 +71,7 @@ export async function applyLiveInfrastructure(assessment, { report = () => {} } 
     }
     for (const device of assessment.devices) device.checks = device.checks.filter((check) => check.source !== "pending");
     recalculateDeviceScores(assessment);
+    applyOfficialAssessment(assessment);
   } catch (error) {
     assessment.lab.mode = "mock";
     assessment.lab.connection = {

@@ -10,6 +10,7 @@ import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/inter
 import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../src/checks/ecorouter-routing.js";
 import { parseClientDhcp, parseDhcpServerConfig, parseResolvSearch } from "../src/checks/dhcp-timezone.js";
 import { parseEcoRouterUser } from "../src/checks/users.js";
+import { applyOfficialAssessment, officialCriterionDefinitions } from "../src/checks/official-assessment.js";
 import { parseSshAssessment } from "../src/checks/ssh.js";
 import { parseHostQueries } from "../src/checks/dns.js";
 import { parseTcpdumpLine } from "../src/services/traffic-capture.js";
@@ -193,7 +194,7 @@ test("topology check accepts arbitrary non-overlapping RFC1918 networks", async 
   const events = [];
   await applyTopologyNetworkChecks(data, adapter, serial, (event) => events.push(event));
   const results = events.filter((event) => event.kind === "result");
-  assert.equal(results.length, 9);
+  assert.equal(results.length, 10);
   assert.ok(results.every((event) => event.check.status === "pass"));
 });
 
@@ -354,4 +355,40 @@ test("tcpdump parser extracts real packet metadata and resolves VM MAC addresses
   assert.equal(packet.dstIp, "8.8.8.8");
   assert.equal(packet.dstPort, 443);
   assert.equal(packet.length, 74);
+});
+
+test("official assessment uses the 25-point weighted module-one scale", () => {
+  const ids = [
+    "isp-forwarding", "isp-nat", "isp-nat-persistent", "isp-hostname", "hq-hostname", "br-hostname",
+    "hqsrv-hostname", "brsrv-hostname", "cli-hostname", "hq-wan-ipv4", "br-wan-ipv4",
+    "hq-vlan100-ipv4", "hq-vlan200-ipv4", "hq-vlan999-ipv4", "hq-srv-ipv4", "brsrv-ipv4",
+    "hq-cli-ipv4", "hq-interfaces", "hq-dhcp-server", "cli-address", "cli-domain-search", "hq-tunnel",
+    "br-tunnel", "hq-srv-internet", "hq-cli-internet", "br-srv-internet", "hq-default-route",
+    "br-default-route", "hq-ospf", "br-ospf", "br-routes", "hq-srv-ssh", "br-srv-ssh",
+    "hq-srv-sshuser", "br-srv-sshuser", "hq-net-admin", "br-net-admin", "hqsrv-dns",
+    "hqsrv-dns-forwarding", "isp-timezone", "hq-srv-timezone", "brsrv-time", "hq-cli-timezone",
+    "hq-timezone", "br-timezone"
+  ];
+  const assessment = {
+    devices: [{ checks: ids.map((id) => ({ id, status: "pass", source: "live", evidence: id === "hq-dhcp-server" ? "HQ-RTR server=1" : id === "hqsrv-dns" ? "A=7/7 · PTR=5/5" : "ok" })) }]
+  };
+  applyOfficialAssessment(assessment);
+  assert.equal(officialCriterionDefinitions.reduce((sum, item) => sum + item.maxScore, 0), 25);
+  assert.equal(assessment.official.maxScore, 25);
+  assert.equal(assessment.official.score, 24);
+  assert.equal(assessment.official.evaluatedCount, 12);
+  assert.equal(assessment.official.criteria.find((item) => item.code === "1.8").score, 3);
+  assert.equal(assessment.official.criteria.find((item) => item.code === "1.13").status, "unknown");
+});
+
+test("official timezone criterion awards the weighted partial level", () => {
+  const assessment = { devices: [{ checks: [
+    ...["isp-timezone", "hq-srv-timezone", "brsrv-time", "hq-cli-timezone"].map((id) => ({ id, status: "pass" })),
+    { id: "hq-timezone", status: "fail" }, { id: "br-timezone", status: "fail" }
+  ] }] };
+  applyOfficialAssessment(assessment);
+  const timezone = assessment.official.criteria.find((item) => item.code === "1.12");
+  assert.equal(timezone.level, 1);
+  assert.equal(timezone.score, 0.5);
+  assert.equal(timezone.status, "warning");
 });

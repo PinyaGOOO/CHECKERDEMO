@@ -21,7 +21,8 @@ const vendorFiles = new Map([
 const port = Number(process.env.PORT || 8007);
 const consolePort = Number(process.env.CONSOLE_HTTPS_PORT || 8443);
 const runs = new Map();
-const assessmentCheckTotal = 49;
+let latestAssessment = null;
+const assessmentCheckTotal = 54;
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -90,6 +91,7 @@ function beginRun() {
         }
       });
       assessment.lab.checkedAt = new Date().toISOString();
+      latestAssessment = assessment;
       run.assessment = assessment;
       run.completed = run.total;
       run.status = "completed";
@@ -206,7 +208,13 @@ async function handleRequest(request, response) {
 
   if (request.method === "GET" && url.pathname === "/api/assessment") {
     await consoleCenter.resetConnections();
-    return json(response, 200, await applyLiveInfrastructure(snapshot()));
+    latestAssessment = await applyLiveInfrastructure(snapshot());
+    return json(response, 200, latestAssessment);
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/official") {
+    if (!latestAssessment?.official) return json(response, 404, { error: "Сначала запустите проверку" });
+    return json(response, 200, latestAssessment.official);
   }
 
   if (request.method === "GET" && url.pathname === "/api/infrastructure") {

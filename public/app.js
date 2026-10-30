@@ -24,12 +24,17 @@ function formatDate(value) {
   return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }).format(date);
 }
 
+function formatScore(value) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(".", ",");
+}
+
 function renderSummary() {
   const { lab, devices } = state.assessment;
   const checks = devices.flatMap((device) => device.checks);
-  const liveChecks = checks.filter((check) => check.source === "live");
-  const score = liveChecks.reduce((sum, check) => sum + check.score, 0);
-  const max = liveChecks.reduce((sum, check) => sum + check.maxScore, 0);
+  const official = state.assessment.official;
+  const summaryChecks = official?.criteria || checks;
+  const score = official?.score ?? checks.filter((check) => check.source === "live").reduce((sum, check) => sum + check.score, 0);
+  const max = official?.maxScore ?? checks.filter((check) => check.source === "live").reduce((sum, check) => sum + check.maxScore, 0);
   const percent = max ? Math.round(score / max * 100) : 0;
 
   $("#lab-title").textContent = lab.title;
@@ -40,15 +45,15 @@ function renderSummary() {
   $("#data-mode").textContent = live ? "Live-инвентарь · mock отключён" : "Автономный mock-режим";
   $("#data-mode").classList.toggle("mock", !live);
   $("#checked-at").textContent = formatDate(lab.checkedAt);
-  $("#score-value").textContent = score;
+  $("#score-value").textContent = formatScore(score);
   $("#score-max").textContent = `/ ${max}`;
   $("#score-percent").textContent = `${percent}%`;
   $("#score-ring").style.setProperty("--score", percent);
-  $("#score-caption").textContent = max ? `${liveChecks.length} из ${checks.length} критериев подключено` : "Нет выполненных проверок";
-  $("#passed-count").textContent = checks.filter((check) => check.status === "pass").length;
-  $("#warning-count").textContent = checks.filter((check) => check.status === "warning").length;
-  $("#failed-count").textContent = checks.filter((check) => check.status === "fail").length;
-  $("#unknown-count").textContent = checks.filter((check) => check.status === "unknown").length;
+  $("#score-caption").textContent = official ? `${official.evaluatedCount} из ${official.criteria.length} официальных критериев оценено` : "Официальный расчёт недоступен";
+  $("#passed-count").textContent = summaryChecks.filter((check) => check.status === "pass").length;
+  $("#warning-count").textContent = summaryChecks.filter((check) => check.status === "warning").length;
+  $("#failed-count").textContent = summaryChecks.filter((check) => check.status === "fail").length;
+  $("#unknown-count").textContent = summaryChecks.filter((check) => check.status === "unknown").length;
   $("#online-count").textContent = `${devices.filter((device) => device.state === "running").length}/${devices.length} online`;
 }
 
@@ -57,6 +62,7 @@ function renderDevices() {
   list.innerHTML = "";
   for (const device of state.assessment.devices) {
     const status = deviceStatus(device);
+    const passed = device.checks.filter((check) => check.status === "pass").length;
     const row = document.createElement("button");
     row.className = `device-row ${device.state}${device.id === state.selected ? " active" : ""}`;
     row.dataset.id = device.id;
@@ -64,7 +70,7 @@ function renderDevices() {
     row.innerHTML = `
       <span class="device-icon" style="border-color:${device.color}"></span>
       <span class="device-copy"><strong>${device.vmid} · ${device.name}</strong></span>
-      <span class="device-result">${device.score}/${device.assessedMaxScore ?? device.maxScore}<i class="${status}"></i></span>`;
+      <span class="device-result">${passed}/${device.checks.length}<i class="${status}"></i></span>`;
     row.addEventListener("click", () => selectDevice(device.id));
     list.append(row);
   }
@@ -79,8 +85,8 @@ function renderDetail() {
   $("#device-role").textContent = device.role;
   $("#device-state").textContent = device.state.toUpperCase();
   $("#device-state").classList.toggle("stopped", device.state !== "running");
-  $("#device-score").textContent = device.score;
-  $("#device-max").textContent = ` / ${device.assessedMaxScore ?? device.maxScore}`;
+  $("#device-score").textContent = device.checks.filter((check) => check.status === "pass").length;
+  $("#device-max").textContent = ` / ${device.checks.length}`;
   $("#device-glyph").style.color = device.color;
   $("#check-total").textContent = `${device.checks.length} критериев`;
 
@@ -94,7 +100,7 @@ function renderDetail() {
       <button class="check-summary" aria-expanded="false">
         <span class="status-symbol ${check.status}">${meta.symbol}</span>
         <span class="check-title"><strong>${check.title}${check.source === "live" ? '<em class="live-badge">LIVE</em>' : ""}</strong><small>${meta.label} · ${check.method}</small></span>
-        <span class="check-score">${check.score}<small> / ${check.maxScore}</small></span>
+        <span class="check-score">${meta.label}</span>
         <span class="expand-icon">⌄</span>
       </button>
       <div class="evidence"><div><span class="evidence-label">Evidence</span><p>${check.evidence}</p></div><span class="duration">${check.duration == null ? "—" : `${check.duration} ms`}</span></div>`;

@@ -121,19 +121,30 @@ const criteria = [
 const list = document.querySelector("#criteria-list");
 const empty = document.querySelector("#criteria-empty");
 const count = document.querySelector("#criteria-count");
+const officialState = document.querySelector("#official-state");
+let officialResults = new Map();
+
+function formatScore(value) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(".", ",");
+}
 
 function card(item) {
+  const official = officialResults.get(item.code);
+  const resultLabel = official
+    ? official.level == null ? "Требуется ручная проверка" : `Уровень ${official.level} · ${formatScore(official.score)} / ${official.maxScore}`
+    : "Результата пока нет";
   const article = document.createElement("article");
   article.className = "criterion-card";
   article.innerHTML = `
     <header class="criterion-head">
       <span class="criterion-code">${item.code}</span>
       <h2>${item.title}</h2>
-      <span class="criterion-weight"><strong>${item.weight}</strong><span>вес</span></span>
+      <span class="criterion-weight"><strong>${item.weight}</strong><span>макс.</span><span class="criterion-result ${official?.status || "unknown"}">${resultLabel}</span></span>
     </header>
     <ol class="rubric">
       ${item.levels.map((text, level) => `<li><span class="level level-${level}">${level}</span><span>${text}</span></li>`).join("")}
-    </ol>`;
+    </ol>
+    ${official ? `<div class="official-evidence"><strong>Основание оценки</strong><br>${official.evidence}</div>` : ""}`;
   return article;
 }
 
@@ -147,3 +158,17 @@ function render(query = "") {
 
 document.querySelector("#criteria-search").addEventListener("input", (event) => render(event.target.value));
 render();
+
+fetch("/api/official")
+  .then(async (response) => {
+    if (!response.ok) throw new Error((await response.json()).error || `HTTP ${response.status}`);
+    return response.json();
+  })
+  .then((official) => {
+    officialResults = new Map(official.criteria.map((criterion) => [criterion.code, criterion]));
+    officialState.textContent = `Последняя официальная оценка: ${formatScore(official.score)} / ${official.maxScore} · оценено ${official.evaluatedCount} из ${official.criteria.length} критериев.`;
+    render(document.querySelector("#criteria-search").value);
+  })
+  .catch((error) => {
+    officialState.textContent = `${error.message}. Запустите проверку на главной странице.`;
+  });
