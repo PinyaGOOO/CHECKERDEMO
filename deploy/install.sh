@@ -13,6 +13,10 @@ SKIP_PACKAGES="${SKIP_PACKAGES:-0}"
 REGENERATE_TLS="${REGENERATE_TLS:-0}"
 LAB_VMIDS="${LAB_VMIDS:-100 101 102 103 104 105 106}"
 QGA_GUEST_VMIDS="${QGA_GUEST_VMIDS:-100 104 105 106}"
+ALT_ISO_NAME="${ALT_ISO_NAME:-alt-server-11.1-x86_64.iso}"
+ALT_ISO_URL="${ALT_ISO_URL:-https://download.basealt.ru/pub/distributions/ALTLinux/p11/images/server/x86_64/${ALT_ISO_NAME}}"
+ALT_ISO_SHA512_URL="${ALT_ISO_SHA512_URL:-https://download.basealt.ru/pub/distributions/ALTLinux/p11/images/server/x86_64/SHA512SUM}"
+ISO_STORAGE="${ISO_STORAGE:-}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\n[%s] %s\n' "${SERVICE_NAME}" "$*"; }
@@ -26,6 +30,86 @@ detect_ip() {
   fi
   route_address="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)"
   printf '%s\n' "${route_address}"
+}
+
+select_iso_storage() {
+  local status_output choice item index
+  local -a storages=()
+  status_output="$(pvesm status --content iso)"
+  mapfile -t storages < <(awk 'NR > 1 && $3 == "active" {print $1}' <<<"${status_output}")
+  (( ${#storages[@]} > 0 )) || fail "не найдено активных хранилищ с поддержкой ISO"
+
+  if [[ -n "${ISO_STORAGE}" ]]; then
+    for item in "${storages[@]}"; do
+      [[ "${item}" == "${ISO_STORAGE}" ]] && return
+    done
+    fail "хранилище ${ISO_STORAGE} недоступно или не поддерживает ISO"
+  fi
+
+  [[ -t 0 && -r /dev/tty ]] || fail "интерактивный выбор хранилища недоступен; задайте ISO_STORAGE"
+  printf '\n[%s] Доступные хранилища для ISO:\n' "${SERVICE_NAME}"
+  index=1
+  for item in "${storages[@]}"; do
+    printf '  %d) %s\n' "${index}" "$(awk -v name="${item}" 'NR > 1 && $1 == name {print $0}' <<<"${status_output}")"
+    ((index += 1))
+  done
+  printf '[%s] Выберите хранилище [1-%d]: ' "${SERVICE_NAME}" "${#storages[@]}"
+  read -r choice </dev/tty
+  [[ "${choice}" =~ ^[0-9]+$ ]] || fail "нужно указать номер хранилища"
+  (( choice >= 1 && choice <= ${#storages[@]} )) || fail "номер хранилища вне диапазона"
+  ISO_STORAGE="${storages[choice-1]}"
+}
+
+download_alt_iso() {
+  local iso_path partial checksum_file expected actual
+  [[ "${ALT_ISO_NAME}" =~ ^[A-Za-z0-9._-]+\.iso$ ]] || fail "некорректное имя ALT_ISO_NAME"
+  command -v curl >/dev/null 2>&1 || fail "curl необходим для загрузки ALT ISO"
+  command -v sha512sum >/dev/null 2>&1 || fail "sha512sum необходим для проверки ALT ISO"
+  select_iso_storage
+  ALT_ISO_VOLID="${ISO_STORAGE}:iso/${ALT_ISO_NAME}"
+  iso_path="$(pvesm path "${ALT_ISO_VOLID}")"
+  install -d "$(dirname "${iso_path}")"
+
+  if [[ -s "${iso_path}" ]]; then
+    log "ISO уже загружен: ${ALT_ISO_VOLID}"
+    return
+  fi
+
+  log "Загрузка ${ALT_ISO_URL} в ${ALT_ISO_VOLID}"
+  partial="${iso_path}.part"
+  curl -fL --retry 3 --retry-delay 3 --continue-at - --progress-bar -o "${partial}" "${ALT_ISO_URL}"
+  mv -f "${partial}" "${iso_path}"
+
+  checksum_file="$(mktemp /tmp/alt-iso-sha512.XXXXXX)"
+  if ! curl -fsSL --retry 3 -o "${checksum_file}" "${ALT_ISO_SHA512_URL}"; then
+    rm -f "${checksum_file}"
+    fail "не удалось загрузить SHA512SUM для ISO"
+  fi
+  expected="$(awk -v name="${ALT_ISO_NAME}" '$NF == name || $NF == "./" name {print $1; exit}' "${checksum_file}")"
+  rm -f "${checksum_file}"
+  [[ "${expected}" =~ ^[a-fA-F0-9]{128}$ ]] || fail "в SHA512SUM отсутствует ${ALT_ISO_NAME}"
+  actual="$(sha512sum "${iso_path}" | awk '{print $1}')"
+  if [[ "${actual,,}" != "${expected,,}" ]]; then
+    rm -f "${iso_path}"
+    fail "контрольная сумма ISO не совпала; повреждённый файл удалён"
+  fi
+  log "ISO загружен и проверен: ${ALT_ISO_VOLID}"
+}
+
+attach_alt_iso_if_needed() {
+  local vmid line volid media_path
+  for vmid in ${QGA_GUEST_VMIDS}; do
+    line="$(qm config "${vmid}" | awk -F': ' '$2 ~ /media=cdrom/ {print $2; exit}')"
+    volid="${line%%,*}"
+    media_path=""
+    if [[ -n "${volid}" ]]; then media_path="$(pvesm path "${volid}" 2>/dev/null || true)"; fi
+    if [[ -n "${media_path}" && -s "${media_path}" ]]; then
+      log "VM ${vmid}: используется подключённый ISO ${volid}"
+      continue
+    fi
+    log "VM ${vmid}: подключение ${ALT_ISO_VOLID} к ide2"
+    qm set "${vmid}" --ide2 "${ALT_ISO_VOLID},media=cdrom"
+  done
 }
 
 qga_enabled_in_config() {
@@ -85,6 +169,8 @@ command -v qm >/dev/null 2>&1 || fail "qm не найден: установку 
 [[ "${CONSOLE_HTTPS_PORT}" =~ ^[0-9]+$ ]] && (( CONSOLE_HTTPS_PORT > 0 && CONSOLE_HTTPS_PORT < 65536 )) || fail "некорректный CONSOLE_HTTPS_PORT"
 [[ "${PORT}" != "${CONSOLE_HTTPS_PORT}" ]] || fail "HTTP и HTTPS порты должны различаться"
 
+download_alt_iso
+attach_alt_iso_if_needed
 prepare_qga_devices
 
 if [[ "${SKIP_PACKAGES}" != "1" ]]; then
