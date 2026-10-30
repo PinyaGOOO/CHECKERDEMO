@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Полный перечень критериев модуля 1 демонстрационного экзамена" />
+    <title>Критерии модуля 1 · Web Demo Checker</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/criteria.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand criteria-brand" href="/">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span><strong>Web Demo Checker</strong><small>Assessment criteria</small></span>
+        </a>
+        <div class="topbar-actions">
+          <a class="simulation-link active-link" href="/criteria.html" aria-current="page">Критерии</a>
+          <a class="simulation-link" href="/">← К проверке</a>
+        </div>
+      </header>
+
+      <main class="criteria-main">
+        <section class="criteria-hero">
+          <div>
+            <span class="eyebrow">ОЦЕНОЧНАЯ ВЕДОМОСТЬ · МОДУЛЬ 1</span>
+            <h1>Настройка сетевой инфраструктуры</h1>
+            <p>Полный перечень критериев 1.1-1.13 и уровней выполнения из оценочной ведомости.</p>
+          </div>
+          <div class="criteria-total"><span>Максимум</span><strong>25</strong><small>баллов</small></div>
+        </section>
+
+        <section class="criteria-note" aria-label="Пояснение оценивания">
+          <strong>Как читать шкалу</strong>
+          <p>В ведомости для каждого действия приведены уровни выполнения 0, 1 и 2. Поле «Вес» показывает максимальный вклад критерия в итог модуля.</p>
+        </section>
+
+        <section class="criteria-tools" aria-label="Поиск по критериям">
+          <label><span>Поиск</span><input id="criteria-search" type="search" placeholder="Код, устройство или действие…" autocomplete="off" /></label>
+          <span id="criteria-count">13 критериев</span>
+        </section>
+
+        <section id="criteria-list" class="criteria-list" aria-live="polite"></section>
+        <p id="criteria-empty" class="criteria-empty" hidden>По этому запросу критерии не найдены.</p>
+
+        <footer class="criteria-source">
+          Источник: оценочная ведомость № 308768\389846, код 09.02.06-1-2026 В3, сформирована 04.06.2026.
+        </footer>
+      </main>
+    </div>
+    <script type="module" src="/criteria.js"></script>
+  </body>
+</html>

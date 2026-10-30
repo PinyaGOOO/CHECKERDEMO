@@ -1,0 +1,36 @@
+.criteria-brand { color: inherit; text-decoration: none; }
+.active-link { color: #e5fcff; border-color: rgba(41,199,216,.55); background: rgba(41,199,216,.12); }
+.criteria-main { max-width: 1180px; }
+.criteria-hero { display:flex; align-items:flex-end; justify-content:space-between; gap:28px; margin-bottom:22px; }
+.criteria-hero h1 { margin:8px 0 5px; font-size:clamp(29px,4vw,44px); letter-spacing:-.04em; }
+.criteria-hero p { margin:0; color:var(--muted); }
+.criteria-total { min-width:150px; padding:17px 20px; border:1px solid #2c475d; border-radius:13px; text-align:right; background:linear-gradient(145deg,#15273a,#101a29); }
+.criteria-total span,.criteria-total small { display:block; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.1em; }
+.criteria-total strong { display:inline-block; margin:2px 6px 0 0; color:var(--cyan); font-size:34px; line-height:1; }
+.criteria-total small { display:inline; }
+.criteria-note { margin-bottom:16px; padding:14px 17px; border:1px solid rgba(41,199,216,.2); border-radius:10px; background:rgba(41,199,216,.055); }
+.criteria-note strong { color:#bceef2; font-size:12px; }
+.criteria-note p { margin:4px 0 0; color:#93a5b8; font-size:12px; }
+.criteria-tools { margin-bottom:14px; display:flex; align-items:flex-end; justify-content:space-between; gap:18px; }
+.criteria-tools label { flex:1; }
+.criteria-tools label span { display:block; margin-bottom:6px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.1em; }
+.criteria-tools input { width:100%; height:43px; padding:0 13px; border:1px solid #30445b; border-radius:8px; outline:0; color:var(--text); background:#0b1420; }
+.criteria-tools input:focus { border-color:#2e91a0; box-shadow:0 0 0 3px rgba(41,199,216,.08); }
+.criteria-tools > span { padding-bottom:11px; color:#8da0b6; font-size:11px; white-space:nowrap; }
+.criteria-list { display:grid; gap:12px; }
+.criterion-card { overflow:hidden; border:1px solid var(--line); border-radius:12px; background:linear-gradient(145deg,rgba(20,31,47,.98),rgba(13,22,34,.98)); box-shadow:0 14px 40px rgba(0,0,0,.12); }
+.criterion-head { padding:16px 18px; display:grid; grid-template-columns:52px minmax(0,1fr) auto; gap:14px; align-items:start; border-bottom:1px solid var(--line); }
+.criterion-code { width:52px; height:34px; display:grid; place-items:center; border:1px solid rgba(41,199,216,.3); border-radius:7px; color:#8fe3ea; background:rgba(41,199,216,.07); font:700 12px/1 "Cascadia Mono",Consolas,monospace; }
+.criterion-head h2 { margin:1px 0 0; font-size:15px; line-height:1.4; }
+.criterion-weight { text-align:right; }
+.criterion-weight strong { display:block; font-size:19px; }
+.criterion-weight span { color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:.1em; }
+.rubric { margin:0; padding:12px 18px 15px 84px; list-style:none; display:grid; gap:8px; }
+.rubric li { display:grid; grid-template-columns:26px minmax(0,1fr); gap:10px; align-items:start; color:#aebdcd; font-size:12px; line-height:1.5; }
+.level { width:24px; height:24px; display:grid; place-items:center; border-radius:50%; font:700 11px/1 "Cascadia Mono",Consolas,monospace; }
+.level-0 { color:#ff8996; background:rgba(255,102,120,.1); }
+.level-1 { color:#f1c76e; background:rgba(240,185,77,.1); }
+.level-2 { color:#66e0b2; background:rgba(56,216,159,.1); }
+.criteria-empty { padding:45px; border:1px dashed #304159; border-radius:12px; color:var(--muted); text-align:center; }
+.criteria-source { margin-top:20px; padding-top:15px; border-top:1px solid var(--line); color:#65788e; font-size:10px; }
+@media(max-width:720px){.criteria-hero{align-items:flex-start;flex-direction:column}.criteria-total{width:100%;text-align:left}.criteria-tools{align-items:stretch;flex-direction:column;gap:5px}.criteria-tools>span{padding:0}.criterion-head{grid-template-columns:45px minmax(0,1fr);padding:14px}.criterion-code{width:45px}.criterion-weight{grid-column:2;text-align:left}.criterion-weight strong,.criterion-weight span{display:inline}.rubric{padding:12px 14px 15px}.topbar-actions{gap:8px}}
