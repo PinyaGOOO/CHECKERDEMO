@@ -7,6 +7,23 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
 }
 
+export function parseVmConsoleCredentials(output, preferredUsername = null) {
+  const encoded = output.match(/^description:\s*(.+)$/m)?.[1];
+  if (!encoded) return null;
+  const records = decodeURIComponent(encoded)
+    .split(/\r?\n/)
+    .filter((line) => line && !line.startsWith("#") && line.includes(":"))
+    .map((line) => {
+      const separator = line.indexOf(":");
+      return { username: line.slice(0, separator), password: line.slice(separator + 1) };
+    });
+  if (preferredUsername) {
+    const preferred = records.find((record) => record.username === preferredUsername);
+    if (preferred) return preferred;
+  }
+  return records[0] || null;
+}
+
 export class ProxmoxSshAdapter {
   constructor({ alias = "checker", timeout = 8_000, transport = "ssh" } = {}) {
     this.alias = alias;
@@ -73,15 +90,14 @@ export class ProxmoxSshAdapter {
     return JSON.parse(output);
   }
 
-  async vmConsoleCredentials(vmid) {
+  async vmConsoleCredentials(vmid, { preferredUsername = null } = {}) {
     if (!Number.isInteger(vmid) || vmid < 100) throw new TypeError("Invalid VMID");
     const output = await this.execute(`qm config ${vmid}`);
-    const encoded = output.match(/^description:\s*(.+)$/m)?.[1];
-    if (!encoded) throw new Error(`Console credentials are not defined for VM ${vmid}`);
-    const description = decodeURIComponent(encoded);
-    const record = description.split(/\r?\n/).find((line) => line && !line.startsWith("#") && line.includes(":"));
-    if (!record) throw new Error(`Console credentials are not readable for VM ${vmid}`);
-    const separator = record.indexOf(":");
-    return { username: record.slice(0, separator), password: record.slice(separator + 1) };
+    const credentials = parseVmConsoleCredentials(output, preferredUsername);
+    if (!credentials) throw new Error(`Console credentials are not defined for VM ${vmid}`);
+    if (preferredUsername && credentials.username !== preferredUsername) {
+      throw new Error(`Console credentials for ${preferredUsername} are not defined for VM ${vmid}`);
+    }
+    return credentials;
   }
 }

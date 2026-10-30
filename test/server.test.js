@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { snapshot } from "../src/data/assessment.js";
-import { ProxmoxSshAdapter } from "../src/adapters/proxmox-ssh.js";
+import { ProxmoxSshAdapter, parseVmConsoleCredentials } from "../src/adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-server.js";
 import { applyHostnameChecks, parseEcoRouterDomain, recalculateDeviceScores } from "../src/checks/hostnames.js";
 import { EcoRouterSerialAdapter, parseEcoRouterHostname, parseEcoRouterLogin } from "../src/adapters/ecorouter-serial.js";
@@ -32,6 +32,12 @@ test("Proxmox SSH adapter uses the checker alias by default", () => {
 test("Proxmox adapter supports direct local transport", () => {
   const adapter = new ProxmoxSshAdapter({ transport: "local" });
   assert.equal(adapter.transport, "local");
+});
+
+test("Proxmox console credentials can prefer the root account", () => {
+  const config = "description: #Log%3APass%0Auser%3Aresu%0Aroot%3Atoor";
+  assert.deepEqual(parseVmConsoleCredentials(config), { username: "user", password: "resu" });
+  assert.deepEqual(parseVmConsoleCredentials(config, "root"), { username: "root", password: "toor" });
 });
 
 test("every check has unique id and evidence", () => {

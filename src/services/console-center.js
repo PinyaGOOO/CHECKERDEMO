@@ -57,9 +57,18 @@ class ConsoleCenter {
     }
 
     let credentials = null;
+    let rootConsole = false;
     try {
-      if (linuxSerialVmids.has(vmid)) await this.startRootConsole(vmid);
-      else credentials = await adapter.vmConsoleCredentials(vmid);
+      if (linuxSerialVmids.has(vmid)) {
+        try {
+          await this.startRootConsole(vmid);
+          rootConsole = true;
+        } catch {
+          // A fresh exam image may have serial0 and root credentials but no
+          // QEMU Guest Agent yet. Fall back to a normal root serial login.
+          credentials = await adapter.vmConsoleCredentials(vmid, { preferredUsername: "root" });
+        }
+      } else credentials = await adapter.vmConsoleCredentials(vmid);
     } catch (error) {
       this.locks.delete(vmid);
       throw error;
@@ -74,7 +83,7 @@ class ConsoleCenter {
       sentPassword: false,
       resetting: true,
       sttyApplied: false,
-      rootConsole: linuxSerialVmids.has(vmid)
+      rootConsole
     };
     owner.devices.set(vmid, device);
     socket.on("connect", () => {
