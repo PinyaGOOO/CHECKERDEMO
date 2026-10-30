@@ -191,24 +191,48 @@ export class EcoRouterSerialAdapter {
     const timer = setTimeout(() => socket.destroy(new Error("Serial login timeout")), this.timeout);
     try {
       await connected;
-      socket.write("q\x03\r\nend\r\n");
-      await delay(350);
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const screen = cleanTerminalOutput(chunks.join(""));
-        if (/login:\s*$/i.test(screen)) break;
-        socket.write("exit\r\n");
-        await delay(350);
+      chunks.length = 0;
+      socket.write("\x03\r\n");
+      const logoutDeadline = Date.now() + 5_000;
+      let lastWakeup = 0;
+      while (Date.now() < logoutDeadline) {
+        await delay(100);
+        const current = cleanTerminalOutput(chunks.join(""));
+        if (/login:\s*$/i.test(current)) break;
+        if (/(?:^|\n)[A-Za-z0-9_.()-]+(?:\([^\n)]*\))?[>#]\s*$/.test(current.trimEnd())) {
+          chunks.length = 0;
+          socket.write("exit\r\n");
+          await delay(250);
+          continue;
+        }
+        if (/Password:\s*$/i.test(current)) {
+          chunks.length = 0;
+          socket.write("\x03\r\n");
+          await delay(250);
+          continue;
+        }
+        if (Date.now() - lastWakeup >= 600) {
+          socket.write("\r\n");
+          lastWakeup = Date.now();
+        }
       }
       let screen = cleanTerminalOutput(chunks.join(""));
       if (!/login:\s*$/i.test(screen)) return false;
-      const loginOffset = chunks.join("").length;
+      chunks.length = 0;
       socket.write(`${credentials.username}\r\n`);
-      await delay(300);
+      const passwordDeadline = Date.now() + 2_000;
+      do {
+        await delay(100);
+        screen = cleanTerminalOutput(chunks.join(""));
+        if (/Password:\s*$/i.test(screen) || /Login incorrect/i.test(screen)) break;
+      } while (Date.now() < passwordDeadline);
+      if (!/Password:\s*$/i.test(screen)) return false;
+      chunks.length = 0;
       socket.write(`${credentials.password}\r\n`);
       const resultDeadline = Date.now() + 3_000;
       do {
         await delay(100);
-        screen = cleanTerminalOutput(chunks.join("").slice(loginOffset));
+        screen = cleanTerminalOutput(chunks.join(""));
         if (/Login incorrect|authentication failed/i.test(screen) || parseEcoRouterLogin(screen).authenticated) break;
       } while (Date.now() < resultDeadline);
       const result = parseEcoRouterLogin(screen);
