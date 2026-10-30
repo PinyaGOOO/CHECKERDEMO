@@ -63,7 +63,10 @@ else
 fi
 
 log "Установка Node.js-зависимостей и запуск тестов"
-npm --prefix "${INSTALL_DIR}" ci --omit=dev
+npm_config_fetch_retries="${NPM_FETCH_RETRIES:-2}" \
+npm_config_fetch_retry_maxtimeout="${NPM_FETCH_RETRY_MAXTIMEOUT:-10000}" \
+npm_config_fetch_timeout="${NPM_FETCH_TIMEOUT:-20000}" \
+  npm --prefix "${INSTALL_DIR}" ci --omit=dev --prefer-offline --no-audit --no-fund
 npm --prefix "${INSTALL_DIR}" test
 
 log "Подготовка TLS"
