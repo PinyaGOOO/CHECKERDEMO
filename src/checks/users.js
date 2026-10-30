@@ -103,11 +103,19 @@ export async function applyUserChecks(assessment, adapter, serial, report = () =
       const credentials = await adapter.vmConsoleCredentials(vmid);
       const config = await serial.getRunningConfig(vmid, credentials);
       const user = parseEcoRouterUser(config, "net_admin");
-      const login = user?.role?.toLowerCase() === "admin" && user.passwordConfigured
-        ? await serial.testCredentials(vmid, { username: "net_admin", password: "P@ssw0rd" })
-        : false;
-      const valid = Boolean(user && user.passwordConfigured && user.role?.toLowerCase() === "admin" && login);
-      setResult(check, valid ? "pass" : "fail", `пользователь=${user ? "есть" : "нет"} · пароль=${user?.passwordConfigured ? "настроен" : "нет"} · роль=${user?.role || "нет"} · вход=${login ? "успешен" : "не подтверждён"}`, duration());
+      // Some EcoRouter builds omit local accounts from the generic running-config.
+      // A successful login at the privileged # prompt proves the account, password
+      // and admin role without exposing secrets in the assessment log.
+      const login = await serial.testCredentials(
+        vmid,
+        { username: "net_admin", password: "P@ssw0rd" },
+        { requirePrivileged: true }
+      );
+      const valid = Boolean(login);
+      const configEvidence = user
+        ? `running-config: пароль=${user.passwordConfigured ? "настроен" : "нет"}, роль=${user.role || "нет"}`
+        : "running-config: учётные записи скрыты";
+      setResult(check, valid ? "pass" : "fail", `${configEvidence} · вход net_admin=${login ? "успешен, привилегии admin (#)" : "не подтверждён"}`, duration());
     } catch (error) {
       setResult(check, "unknown", `Serial CLI недоступен · ${errorSummary(error)}`, duration());
     }

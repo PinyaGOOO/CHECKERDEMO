@@ -22,6 +22,22 @@ function cliPromptVisible(value) {
   return /(?:^|\n)[A-Za-z0-9_.()-]+(?:\([^\n)]*\))?[>#]\s*$/.test(tail);
 }
 
+export function parseEcoRouterLogin(value) {
+  const cleaned = cleanTerminalOutput(value);
+  if (/Login incorrect|authentication failed/i.test(cleaned)) {
+    return { authenticated: false, privileged: false };
+  }
+  const prompt = cleaned
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .reverse()
+    .find((line) => /^[A-Za-z0-9_.()-]+(?:\([^\n)]*\))?[>#]\s*$/.test(line));
+  return {
+    authenticated: Boolean(prompt),
+    privileged: Boolean(prompt?.trimEnd().endsWith("#"))
+  };
+}
+
 export function parseEcoRouterHostname(value) {
   const cleaned = cleanTerminalOutput(value);
   const configured = cleaned.match(/^\s*hostname\s+(\S+)\s*$/im)?.[1];
@@ -149,7 +165,7 @@ export class EcoRouterSerialAdapter {
     return this.runningConfigCache.get(vmid);
   }
 
-  async testCredentials(vmid, credentials) {
+  async testCredentials(vmid, credentials, { requirePrivileged = false } = {}) {
     const socketPath = `${this.socketDirectory}/${vmid}.serial0`;
     const socket = net.createConnection({ path: socketPath });
     const chunks = [];
@@ -171,12 +187,14 @@ export class EcoRouterSerialAdapter {
       }
       let screen = cleanTerminalOutput(chunks.join(""));
       if (!/login:\s*$/i.test(screen)) return false;
+      const loginOffset = chunks.join("").length;
       socket.write(`${credentials.username}\r\n`);
       await delay(300);
       socket.write(`${credentials.password}\r\n`);
       await delay(1_000);
-      screen = cleanTerminalOutput(chunks.join(""));
-      return !/Login incorrect/i.test(screen) && /(?:^|\n)[A-Za-z0-9_.()-]+[>#]\s*$/m.test(screen);
+      screen = cleanTerminalOutput(chunks.join("").slice(loginOffset));
+      const result = parseEcoRouterLogin(screen);
+      return result.authenticated && (!requirePrivileged || result.privileged);
     } finally {
       clearTimeout(timer);
       socket.destroy();

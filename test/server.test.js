@@ -4,7 +4,7 @@ import { snapshot } from "../src/data/assessment.js";
 import { ProxmoxSshAdapter } from "../src/adapters/proxmox-ssh.js";
 import { applyCheckResults, collectHqServerChecks } from "../src/checks/hq-server.js";
 import { applyHostnameChecks, parseEcoRouterDomain, recalculateDeviceScores } from "../src/checks/hostnames.js";
-import { EcoRouterSerialAdapter, parseEcoRouterHostname } from "../src/adapters/ecorouter-serial.js";
+import { EcoRouterSerialAdapter, parseEcoRouterHostname, parseEcoRouterLogin } from "../src/adapters/ecorouter-serial.js";
 import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouterInterfaces, isPrivateIpv4, isUsableHost, sameSubnet, rangesOverlap } from "../src/checks/basic-network.js";
 import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
 import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../src/checks/ecorouter-routing.js";
@@ -92,6 +92,12 @@ test("EcoRouter serial output parser extracts hostname", () => {
   const output = "ecorouter>show hostname\r\n\recorouter\x1b[m\r\n\recorouter>";
   assert.equal(parseEcoRouterHostname(output), "ecorouter");
   assert.equal(parseEcoRouterHostname("show hostname\nbr-rtr\nbr-rtr>\nend\n"), "br-rtr");
+});
+
+test("EcoRouter login parser distinguishes privileged prompt", () => {
+  assert.deepEqual(parseEcoRouterLogin("Password:\nEcoRouter>"), { authenticated: true, privileged: false });
+  assert.deepEqual(parseEcoRouterLogin("Password:\nEcoRouter#"), { authenticated: true, privileged: true });
+  assert.deepEqual(parseEcoRouterLogin("Login incorrect\necorouter login:"), { authenticated: false, privileged: false });
 });
 
 test("EcoRouter adapter shares one running-config snapshot per assessment", async () => {

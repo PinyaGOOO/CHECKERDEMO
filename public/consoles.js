@@ -18,6 +18,13 @@ document.querySelector("#dashboard-link").href = `http://${location.hostname}:80
 function card(vmid) { return document.querySelector(`[data-vmid="${vmid}"]`); }
 function isCtrlC(event) { return event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && (event.code === "KeyC" || String(event.key).toLowerCase() === "c" || event.key === "\u0003"); }
 
+async function toggleVncFullscreen(vmid) {
+  const element = card(vmid);
+  if (!element) return;
+  if (document.fullscreenElement === element) await document.exitFullscreen();
+  else await element.requestFullscreen();
+}
+
 function fitWithCursorGutter(vmid, terminal, fit) {
   const dimensions = fit.proposeDimensions();
   if (!dimensions?.cols || !dimensions?.rows) return;
@@ -100,13 +107,28 @@ function renderCards() {
     article.className = `console-card${device.vnc ? " vnc-card" : ""}`;
     article.dataset.vmid = device.vmid;
     article.style.gridArea = device.area;
-    article.innerHTML = `<header class="console-card-header"><div class="console-title"><i></i><span><strong>${device.vmid} · ${device.name}</strong><small>Отключено</small></span></div><div class="card-actions"><span class="channel">${device.channel}</span>${device.vnc ? "" : '<button class="card-interrupt" type="button" disabled>Ctrl+C</button>'}<button class="card-connect" type="button">Подключить</button></div></header>${device.vnc ? `<div class="vnc-screen" tabindex="0" aria-label="Графическая консоль ${device.name}"><span class="vnc-placeholder">Подготавливается графическая консоль…</span></div>` : `<div class="terminal" aria-label="Консоль ${device.name}"></div>`}`;
+    article.innerHTML = `<header class="console-card-header"><div class="console-title"><i></i><span><strong>${device.vmid} · ${device.name}</strong><small>Отключено</small></span></div><div class="card-actions"><span class="channel">${device.channel}</span>${device.vnc ? '<button class="card-fullscreen" type="button" title="На весь экран" aria-label="Развернуть VNC на весь экран">⛶</button>' : '<button class="card-interrupt" type="button" disabled>Ctrl+C</button>'}<button class="card-connect" type="button">Подключить</button></div></header>${device.vnc ? `<div class="vnc-screen" tabindex="0" aria-label="Графическая консоль ${device.name}"><span class="vnc-placeholder">Подготавливается графическая консоль…</span></div>` : `<div class="terminal" aria-label="Консоль ${device.name}"></div>`}`;
     article.querySelector(".card-connect").addEventListener("click", () => state.connected.has(device.vmid) ? disconnect(device.vmid) : connect(device.vmid));
     article.querySelector(".card-interrupt")?.addEventListener("click", () => sendInterrupt(device.vmid));
+    article.querySelector(".card-fullscreen")?.addEventListener("click", () => toggleVncFullscreen(device.vmid));
+    article.querySelector(".vnc-screen")?.addEventListener("dblclick", () => toggleVncFullscreen(device.vmid));
     grid.append(article);
     if (!device.vnc) createTerminal(device, article.querySelector(".terminal"));
   }
 }
+
+document.addEventListener("fullscreenchange", () => {
+  document.querySelectorAll(".vnc-card").forEach((element) => {
+    const active = document.fullscreenElement === element;
+    element.classList.toggle("fullscreen-active", active);
+    const button = element.querySelector(".card-fullscreen");
+    if (button) {
+      button.textContent = active ? "×" : "⛶";
+      button.title = active ? "Свернуть" : "На весь экран";
+      button.setAttribute("aria-label", active ? "Выйти из полноэкранного режима" : "Развернуть VNC на весь экран");
+    }
+  });
+});
 
 async function api(path, body = {}) {
   const response = await fetch(path, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body) });
