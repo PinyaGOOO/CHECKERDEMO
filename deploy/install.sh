@@ -14,6 +14,16 @@ REGENERATE_TLS="${REGENERATE_TLS:-0}"
 
 log() { printf '\n[%s] %s\n' "${SERVICE_NAME}" "$*"; }
 fail() { printf '\n[%s] ERROR: %s\n' "${SERVICE_NAME}" "$*" >&2; exit 1; }
+detect_ip() {
+  local addresses route_address
+  addresses="$(hostname -I 2>/dev/null || true)"
+  if [[ -n "${addresses}" ]]; then
+    printf '%s\n' "${addresses%% *}"
+    return
+  fi
+  route_address="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)"
+  printf '%s\n' "${route_address}"
+}
 
 [[ "${EUID}" -eq 0 ]] || fail "запустите установщик от root"
 command -v pvesh >/dev/null 2>&1 || fail "pvesh не найден: установку нужно выполнять на Proxmox VE"
@@ -75,7 +85,7 @@ tls_key="${CONFIG_DIR}/tls.key"
 tls_cert="${CONFIG_DIR}/tls.crt"
 if [[ "${REGENERATE_TLS}" == "1" || ! -s "${tls_key}" || ! -s "${tls_cert}" ]]; then
   node_name="$(hostname -f 2>/dev/null || hostname)"
-  node_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  node_ip="$(detect_ip)"
   san="DNS:${node_name},DNS:$(hostname)"
   [[ -z "${node_ip}" ]] || san="${san},IP:${node_ip}"
   openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 825 \
@@ -149,7 +159,7 @@ if (( http_ok != 1 || https_ok != 1 )); then
   fail "сервис запущен, но проверка портов не пройдена"
 fi
 
-node_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+node_ip="$(detect_ip)"
 node_ip="${node_ip:-127.0.0.1}"
 log "Установка завершена"
 printf 'Панель:   http://%s:%s/\n' "${node_ip}" "${PORT}"
