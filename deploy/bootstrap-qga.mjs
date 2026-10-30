@@ -89,7 +89,10 @@ async function installAgent(vmid) {
     "agent_rpm=$(find \"$mount_dir/ALTLinux/RPMS.main\" -maxdepth 1 -name 'qemu-guest-agent-*.rpm' -print -quit)",
     "aux_rpm=$(find \"$mount_dir/ALTLinux/RPMS.main\" -maxdepth 1 -name 'qemu-aux-*.rpm' -print -quit)",
     "test -n \"$agent_rpm\" && test -n \"$aux_rpm\"",
-    "if ! rpm -q qemu-guest-agent >/dev/null 2>&1; then rpm -Uvh \"$aux_rpm\" \"$agent_rpm\"; fi",
+    "if ! rpm -q qemu-guest-agent >/dev/null 2>&1; then",
+    "  rpm_dir=\"$mount_dir/ALTLinux/RPMS.main\"",
+    "  rpm -Uvh \"$rpm_dir\"/udev-rules-hotplug-cpu-*.rpm \"$rpm_dir\"/libnuma-[0-9]*.x86_64.rpm \"$rpm_dir\"/liburing-[0-9]*.x86_64.rpm \"$aux_rpm\" \"$agent_rpm\"",
+    "fi",
     "systemctl enable qemu-guest-agent.service",
     "systemctl restart qemu-guest-agent.service",
     "if test \"$mounted_here\" = 1; then umount \"$mount_dir\"; fi"
@@ -107,7 +110,14 @@ async function installAgent(vmid) {
   }
   session.socket.end();
   if (exitCode === null) throw new Error(`VM ${vmid}: истекло время установки qemu-guest-agent`);
-  if (exitCode !== 0) throw new Error(`VM ${vmid}: установка qemu-guest-agent завершилась с кодом ${exitCode}`);
+  if (exitCode !== 0) {
+    const transcript = session.read();
+    const startOffset = transcript.lastIndexOf(start);
+    const endOffset = transcript.indexOf(end, Math.max(0, startOffset));
+    const details = transcript.slice(startOffset + start.length, endOffset >= 0 ? endOffset : undefined)
+      .split("\n").map((line) => line.trim()).filter((line) => line && line.length < 300).slice(-12).join(" | ");
+    throw new Error(`VM ${vmid}: установка qemu-guest-agent завершилась с кодом ${exitCode}${details ? ` · ${details}` : ""}`);
+  }
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     if (await qgaAvailable(vmid)) {
