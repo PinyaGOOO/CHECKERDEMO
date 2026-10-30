@@ -12,6 +12,8 @@ NODE_MAJOR="${NODE_MAJOR:-20}"
 SKIP_PACKAGES="${SKIP_PACKAGES:-0}"
 REGENERATE_TLS="${REGENERATE_TLS:-0}"
 LAB_VMIDS="${LAB_VMIDS:-100 101 102 103 104 105 106}"
+QGA_GUEST_VMIDS="${QGA_GUEST_VMIDS:-100 104 105 106}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\n[%s] %s\n' "${SERVICE_NAME}" "$*"; }
 fail() { printf '\n[%s] ERROR: %s\n' "${SERVICE_NAME}" "$*" >&2; exit 1; }
@@ -127,6 +129,18 @@ command -v node >/dev/null 2>&1 || fail "Node.js не найден"
 command -v npm >/dev/null 2>&1 || fail "npm не найден"
 node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
 (( node_major >= NODE_MAJOR )) || fail "требуется Node.js ${NODE_MAJOR}+, установлен $(node --version)"
+
+log "Установка QEMU Guest Agent внутри Linux VM ${QGA_GUEST_VMIDS}"
+checker_was_active=0
+if systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+  checker_was_active=1
+  systemctl stop "${SERVICE_NAME}.service"
+fi
+if ! QGA_GUEST_VMIDS="${QGA_GUEST_VMIDS}" node "${SCRIPT_DIR}/bootstrap-qga.mjs"; then
+  (( checker_was_active == 0 )) || systemctl start "${SERVICE_NAME}.service" || true
+  fail "не удалось подготовить QEMU Guest Agent внутри Linux VM"
+fi
+(( checker_was_active == 0 )) || systemctl start "${SERVICE_NAME}.service"
 
 log "Установка исходного кода в ${INSTALL_DIR}"
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
