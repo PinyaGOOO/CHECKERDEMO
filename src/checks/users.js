@@ -42,6 +42,16 @@ export function parseEcoRouterUser(config, username) {
   };
 }
 
+export function parseEcoRouterLocalUser(output, username) {
+  const escaped = username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const start = output.search(new RegExp(`^User:\\s*${escaped}\\s*$`, "im"));
+  if (start < 0) return null;
+  const block = output.slice(start).split(/\r?\n(?=User:|[A-Za-z0-9_.()-]+[>#]\s*$)/m)[0];
+  return {
+    role: block.match(/^\s+([A-Za-z0-9_-]+)\s+'[^']*'\s*$/im)?.[1] || null
+  };
+}
+
 async function collectLinuxUser(vmid, adapter, report) {
   try {
     report({ kind: "command", vmid, command: "getent passwd sshuser; sudo -n true", message: `Проверяем sshuser на VM ${vmid}` });
@@ -102,20 +112,19 @@ export async function applyUserChecks(assessment, adapter, serial, report = () =
     try {
       const credentials = await adapter.vmConsoleCredentials(vmid);
       const config = await serial.getRunningConfig(vmid, credentials);
-      const user = parseEcoRouterUser(config, "net_admin");
+      const configUser = parseEcoRouterUser(config, "net_admin");
+      const localDb = await serial.getUsersLocalDb(vmid, credentials);
+      const localUser = parseEcoRouterLocalUser(localDb, "net_admin");
       // Some EcoRouter builds omit local accounts from the generic running-config.
       // A successful login at the privileged # prompt proves the account, password
       // and admin role without exposing secrets in the assessment log.
       const login = await serial.testCredentials(
         vmid,
-        { username: "net_admin", password: "P@ssw0rd" },
-        { requirePrivileged: true }
+        { username: "net_admin", password: "P@ssw0rd" }
       );
-      const valid = Boolean(login);
-      const configEvidence = user
-        ? `running-config: пароль=${user.passwordConfigured ? "настроен" : "нет"}, роль=${user.role || "нет"}`
-        : "running-config: учётные записи скрыты";
-      setResult(check, valid ? "pass" : "fail", `${configEvidence} · вход net_admin=${login ? "успешен, привилегии admin (#)" : "не подтверждён"}`, duration());
+      const role = localUser?.role || configUser?.role || null;
+      const valid = Boolean(login && role?.toLowerCase() === "admin");
+      setResult(check, valid ? "pass" : "fail", `локальная БД: net_admin=${localUser || configUser ? "есть" : "нет"}, роль=${role || "нет"} · пароль и вход=${login ? "подтверждены" : "не подтверждены"}`, duration());
     } catch (error) {
       setResult(check, "unknown", `Serial CLI недоступен · ${errorSummary(error)}`, duration());
     }

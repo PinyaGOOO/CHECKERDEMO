@@ -9,7 +9,7 @@ import { applyTopologyNetworkChecks, ipv4Addresses, routeGateway, parseEcoRouter
 import { hasMasquerade, te0BindingValid, networkCidr } from "../src/checks/internet-access.js";
 import { parseOspfState, parseTunnel, parseVlanTrunks, parseVmNics } from "../src/checks/ecorouter-routing.js";
 import { parseClientDhcp, parseDhcpServerConfig, parseResolvSearch } from "../src/checks/dhcp-timezone.js";
-import { parseEcoRouterUser } from "../src/checks/users.js";
+import { parseEcoRouterUser, parseEcoRouterLocalUser } from "../src/checks/users.js";
 import { applyOfficialAssessment, officialCriterionDefinitions } from "../src/checks/official-assessment.js";
 import { parseSshAssessment } from "../src/checks/ssh.js";
 import { parseHostQueries } from "../src/checks/dns.js";
@@ -98,6 +98,12 @@ test("EcoRouter login parser distinguishes privileged prompt", () => {
   assert.deepEqual(parseEcoRouterLogin("Password:\nEcoRouter>"), { authenticated: true, privileged: false });
   assert.deepEqual(parseEcoRouterLogin("Password:\nEcoRouter#"), { authenticated: true, privileged: true });
   assert.deepEqual(parseEcoRouterLogin("Login incorrect\necorouter login:"), { authenticated: false, privileged: false });
+});
+
+test("EcoRouter local user parser reads role from local database", () => {
+  const output = "User: admin\n Roles:\n  admin ''\nUser: net_admin\n Description:\n Roles:\n  admin ''\nhq-rtr>";
+  assert.deepEqual(parseEcoRouterLocalUser(output, "net_admin"), { role: "admin" });
+  assert.equal(parseEcoRouterLocalUser(output, "missing"), null);
 });
 
 test("EcoRouter adapter shares one running-config snapshot per assessment", async () => {

@@ -57,10 +57,12 @@ export class EcoRouterSerialAdapter {
     this.socketDirectory = socketDirectory;
     this.timeout = timeout;
     this.runningConfigCache = new Map();
+    this.usersLocalDbCache = new Map();
   }
 
   beginSnapshot() {
     this.runningConfigCache.clear();
+    this.usersLocalDbCache.clear();
   }
 
   async runCommand(vmid, credentials, command, wait = 900) {
@@ -165,6 +167,18 @@ export class EcoRouterSerialAdapter {
     return this.runningConfigCache.get(vmid);
   }
 
+  async getUsersLocalDb(vmid, credentials) {
+    if (!this.usersLocalDbCache.has(vmid)) {
+      const pending = this.runCommand(vmid, credentials, "show users localdb", 900)
+        .catch((error) => {
+          this.usersLocalDbCache.delete(vmid);
+          throw error;
+        });
+      this.usersLocalDbCache.set(vmid, pending);
+    }
+    return this.usersLocalDbCache.get(vmid);
+  }
+
   async testCredentials(vmid, credentials, { requirePrivileged = false } = {}) {
     const socketPath = `${this.socketDirectory}/${vmid}.serial0`;
     const socket = net.createConnection({ path: socketPath });
@@ -191,8 +205,12 @@ export class EcoRouterSerialAdapter {
       socket.write(`${credentials.username}\r\n`);
       await delay(300);
       socket.write(`${credentials.password}\r\n`);
-      await delay(1_000);
-      screen = cleanTerminalOutput(chunks.join("").slice(loginOffset));
+      const resultDeadline = Date.now() + 3_000;
+      do {
+        await delay(100);
+        screen = cleanTerminalOutput(chunks.join("").slice(loginOffset));
+        if (/Login incorrect|authentication failed/i.test(screen) || parseEcoRouterLogin(screen).authenticated) break;
+      } while (Date.now() < resultDeadline);
       const result = parseEcoRouterLogin(screen);
       return result.authenticated && (!requirePrivileged || result.privileged);
     } finally {
